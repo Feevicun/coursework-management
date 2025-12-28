@@ -12,10 +12,13 @@ import {
   Users, 
   CheckCircle,
   X,
-  Loader2
+  Send,
+  Target,
+  User,
+  Loader2 as Spinner
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -30,6 +33,8 @@ import { TeacherProfileModal } from '@/components/TeacherProfileModal';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import { toast } from 'sonner';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 interface Teacher {
   id: string;
@@ -87,6 +92,43 @@ interface FilterTeacher {
   isAvailable?: boolean;
 }
 
+interface StudentInfo {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  program?: string;
+  year?: string;
+  course?: number;
+  group?: string;
+  specialty_id?: number;
+  specialty_code?: string;
+  specialty_name?: string;
+  faculty_id?: number;
+  faculty_name?: string;
+  bio?: string;
+}
+
+interface ApplicationFormData {
+  topic: string;
+  description: string;
+  goals: string;
+  requirements: string;
+  teacherId: string;
+  deadline: string;
+  workType: 'coursework' | 'diploma' | 'practice';
+  student_name: string;
+  student_email: string;
+  student_phone?: string;
+  student_program?: string;
+  student_year?: string;
+  student_group?: string;
+  student_id?: string;
+  student_specialty_id?: number;
+  student_specialty_code?: string;
+  student_faculty_id?: number;
+}
+
 const AllTeachersPage = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -102,17 +144,178 @@ const AllTeachersPage = () => {
   const [teacherModalOpen, setTeacherModalOpen] = useState(false);
   const [currentUserFacultyId, setCurrentUserFacultyId] = useState<number | null>(null);
 
+  // НОВІ СТАНІ ДЛЯ ЗАЯВКИ
+  const [showApplicationForm, setShowApplicationForm] = useState(false);
+  const [applicationFormData, setApplicationFormData] = useState<ApplicationFormData>({
+    topic: '',
+    description: '',
+    goals: '',
+    requirements: '',
+    teacherId: '',
+    deadline: '',
+    workType: 'coursework',
+    student_name: '',
+    student_email: '',
+    student_phone: '',
+    student_program: '',
+    student_year: '',
+    student_group: '',
+    student_id: '',
+    student_specialty_id: undefined,
+    student_specialty_code: '',
+    student_faculty_id: undefined
+  });
+  const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedTeacherForApplication, setSelectedTeacherForApplication] = useState<Teacher | null>(null);
+
   const topic = searchParams.get('topic');
   const facultyId = searchParams.get('faculty');
+
+  // Функція для отримання токену
+  const getAuthToken = (): string | null => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('authToken') || 
+             sessionStorage.getItem('authToken') ||
+             localStorage.getItem('token') ||
+             sessionStorage.getItem('token');
+    }
+    return null;
+  };
+
+  // Функція для отримання інформації про студента
+  const getStudentInfo = async (): Promise<StudentInfo | null> => {
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        console.log('❌ No token found');
+        return null;
+      }
+
+      // Спершу пробуємо з localStorage
+      const currentUserStr = localStorage.getItem('currentUser');
+      if (currentUserStr) {
+        try {
+          const currentUser = JSON.parse(currentUserStr);
+          if (currentUser.name && currentUser.name !== 'Студент') {
+            return {
+              id: currentUser.id || '',
+              name: currentUser.name,
+              email: currentUser.email || '',
+              phone: currentUser.phone || '',
+              program: currentUser.program || currentUser.specialization || '',
+              year: currentUser.year || currentUser.course || '',
+              course: currentUser.course ? parseInt(currentUser.course) : 
+                     currentUser.year ? parseInt(currentUser.year) : undefined,
+              group: currentUser.group || '',
+              specialty_id: currentUser.specialty_id,
+              specialty_code: currentUser.specialty_code || '',
+              specialty_name: currentUser.specialty_name || currentUser.specialty || '',
+              faculty_id: currentUser.faculty_id,
+              faculty_name: currentUser.faculty_name || currentUser.faculty || ''
+            };
+          }
+        } catch {
+          console.log('LocalStorage data not available or invalid');
+        }
+      }
+
+      // Якщо в localStorage немає, робимо API запит
+      const response = await fetch('/api/current-user', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        let studentName = '';
+        
+        if (data.user?.full_name) studentName = data.user.full_name;
+        else if (data.user?.name) studentName = data.user.name;
+        else if (data.user?.first_name && data.user?.last_name) {
+          studentName = `${data.user.first_name} ${data.user.last_name}`.trim();
+        }
+        else if (data.full_name) studentName = data.full_name;
+        else if (data.name) studentName = data.name;
+        else if (data.email) {
+          const emailPart = data.email.split('@')[0];
+          studentName = emailPart.split('.').map((part: string) => 
+            part.charAt(0).toUpperCase() + part.slice(1)
+          ).join(' ');
+        } else {
+          studentName = 'Студент';
+        }
+
+        const specialtyId = data.user?.specialty_id || 
+                           data.specialty_id || 
+                           data.user?.specialty?.id || 
+                           data.specialty?.id;
+        
+        const specialtyCode = data.user?.specialty_code || 
+                             data.specialty_code || 
+                             data.user?.specialty?.code || 
+                             data.specialty?.code;
+        
+        const specialtyName = data.user?.specialty_name || 
+                             data.specialty_name || 
+                             data.user?.specialty?.name || 
+                             data.specialty?.name;
+        
+        const course = data.user?.course || 
+                       data.course || 
+                       data.user?.year || 
+                       data.year;
+        
+        const facultyId = data.user?.faculty_id || 
+                         data.faculty_id || 
+                         data.user?.faculty?.id || 
+                         data.faculty?.id;
+        
+        const facultyName = data.user?.faculty_name || 
+                           data.faculty_name || 
+                           data.user?.faculty?.name || 
+                           data.faculty?.name;
+
+        const studentInfoData: StudentInfo = {
+          id: data.user?.id || data.id || '',
+          name: studentName,
+          email: data.user?.email || data.email || '',
+          phone: data.user?.phone || data.phone || '',
+          program: data.user?.program?.name || data.program || data.user?.program_name || data.user?.specialization || '',
+          year: data.user?.year || data.year || data.user?.course || '',
+          course: course ? parseInt(course) : undefined,
+          group: data.user?.group || data.group || data.user?.student_group || data.student_group || '',
+          specialty_id: specialtyId ? parseInt(specialtyId) : undefined,
+          specialty_code: specialtyCode || '',
+          specialty_name: specialtyName || '',
+          faculty_id: facultyId ? parseInt(facultyId) : undefined,
+          faculty_name: facultyName || ''
+        };
+
+        // Зберігаємо в localStorage для майбутнього використання
+        try {
+          localStorage.setItem('currentUser', JSON.stringify(studentInfoData));
+        } catch {
+          console.log('⚠️ Could not update localStorage');
+        }
+
+        return studentInfoData;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Error fetching student info:', error);
+      return null;
+    }
+  };
 
   // Отримання факультету поточного користувача
   useEffect(() => {
     const getCurrentUserFaculty = async () => {
       try {
-        const token = localStorage.getItem('token') || 
-                      localStorage.getItem('authToken') || 
-                      sessionStorage.getItem('token') || 
-                      sessionStorage.getItem('authToken');
+        const token = getAuthToken();
         
         if (!token) {
           console.log('❌ No token found');
@@ -212,8 +415,7 @@ const AllTeachersPage = () => {
     const fetchTeachers = async () => {
       setIsLoading(true);
       try {
-        const token = localStorage.getItem('token') || 
-                      localStorage.getItem('authToken');
+        const token = getAuthToken();
         
         if (!token) {
           toast.error('Будь ласка, увійдіть в систему');
@@ -412,6 +614,275 @@ const AllTeachersPage = () => {
     setFilteredTeachers(filtered);
   }, [teachers, searchTerm, departmentFilter, availabilityFilter]);
 
+  // НОВІ ФУНКЦІЇ ДЛЯ РОБОТИ З ЗАЯВКАМИ
+
+  // Функція для відкриття форми заявки
+  const handleOpenApplicationForm = async (teacher: Teacher) => {
+    // Завантажуємо інформацію про студента
+    const studentData = await getStudentInfo();
+    setStudentInfo(studentData);
+
+    // Отримуємо дедлайн за замовчуванням за типом роботи
+    const getDefaultDeadline = () => {
+      const date = new Date();
+      date.setMonth(date.getMonth() + 3); // За замовчуванням курсова - 3 місяці
+      return date.toISOString().split('T')[0];
+    };
+
+    // Встановлюємо тему з параметрів URL або залишаємо порожньою
+    const topicFromURL = topic || '';
+
+    setSelectedTeacherForApplication(teacher);
+    
+    setApplicationFormData({
+      topic: topicFromURL,
+      description: '',
+      goals: '',
+      requirements: '',
+      teacherId: teacher.id,
+      deadline: getDefaultDeadline(),
+      workType: 'coursework',
+      student_name: studentData?.name || '',
+      student_email: studentData?.email || '',
+      student_phone: studentData?.phone || '',
+      student_program: studentData?.program || '',
+      student_year: studentData?.year || '',
+      student_group: studentData?.group || '',
+      student_id: studentData?.id || '',
+      student_specialty_id: studentData?.specialty_id,
+      student_specialty_code: studentData?.specialty_code || '',
+      student_faculty_id: studentData?.faculty_id
+    });
+
+    setShowApplicationForm(true);
+  };
+
+  // Функція для закриття форми заявки
+  const handleCloseApplicationForm = () => {
+    setShowApplicationForm(false);
+    setSelectedTeacherForApplication(null);
+    setApplicationFormData({
+      topic: '',
+      description: '',
+      goals: '',
+      requirements: '',
+      teacherId: '',
+      deadline: '',
+      workType: 'coursework',
+      student_name: '',
+      student_email: '',
+      student_phone: '',
+      student_program: '',
+      student_year: '',
+      student_group: '',
+      student_id: '',
+      student_specialty_id: undefined,
+      student_specialty_code: '',
+      student_faculty_id: undefined
+    });
+  };
+
+  // Функція для оновлення даних форми
+  const handleFormDataChange = (field: keyof ApplicationFormData, value: string) => {
+    setApplicationFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Функція для відправки заявки
+  const handleSubmitApplication = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    console.log('🟡 Початок відправки заявки...');
+    
+    setIsSubmitting(true);
+    
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        toast.error('Помилка автентифікації. Будь ласка, увійдіть знову.');
+        return;
+      }
+
+      // Підготуємо дані для відправки
+      const applicationData = {
+        topic: applicationFormData.topic.trim(),
+        description: applicationFormData.description.trim(),
+        goals: applicationFormData.goals.trim(),
+        requirements: applicationFormData.requirements.trim(),
+        teacherId: applicationFormData.teacherId,
+        deadline: applicationFormData.deadline,
+        workType: applicationFormData.workType,
+        student_name: applicationFormData.student_name.trim(),
+        student_email: applicationFormData.student_email.trim(),
+        student_phone: applicationFormData.student_phone?.trim() || '',
+        student_program: applicationFormData.student_program?.trim() || '',
+        student_year: String(studentInfo?.course || ''),
+        student_group: applicationFormData.student_group?.trim() || '',
+        student_id: studentInfo?.id || '',
+        student_id_number: String(studentInfo?.id || ''),
+        student_specialty_id: studentInfo?.specialty_id,
+        student_specialty_code: studentInfo?.specialty_code || '',
+        student_faculty_id: studentInfo?.faculty_id
+      };
+
+      console.log('📤 Відправляємо заявку викладачу:', {
+        endpoint: '/api/student/applications',
+        data: applicationData
+      });
+
+      const response = await fetch('/api/student/applications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(applicationData)
+      });
+
+      const responseText = await response.text();
+      console.log('📥 Відповідь сервера:', {
+        status: response.status,
+        statusText: response.statusText,
+        text: responseText
+      });
+
+      let responseData;
+      try {
+        responseData = responseText ? JSON.parse(responseText) : {};
+      } catch (e) {
+        console.error('Помилка парсингу відповіді:', e);
+        responseData = { message: responseText };
+      }
+
+      if (!response.ok) {
+        console.error('❌ Помилка відправки заявки:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData
+        });
+
+        // Обробка специфічних помилок
+        if (response.status === 400) {
+          const errorMessage = responseData.message || 'Помилка валідації';
+          
+          if (responseData.missingFields) {
+            toast.error(`Будь ласка, заповніть: ${responseData.missingFields.join(', ')}`);
+          } else if (errorMessage.includes('максимальну кількість заявок')) {
+            toast.error('Ви вже маєте максимальну кількість заявок (3). Видаліть або очікуйте відповідь на існуючі заявки.');
+          } else if (errorMessage.includes('вже є активна заявка')) {
+            toast.error('У вас вже є активна заявка до цього викладача. Ви можете подати заявку лише до одного викладача одночасно.');
+          } else if (errorMessage.includes('немає доступних місць')) {
+            toast.error('На жаль, у викладача немає доступних місць для вашої спеціальності та курсу.');
+          } else {
+            toast.error(errorMessage);
+          }
+        } else if (response.status === 401) {
+          toast.error('Помилка автентифікації. Будь ласка, увійдіть знову.');
+        } else if (response.status === 403) {
+          toast.error('Доступ заборонено. Користувач не є студентом.');
+        } else if (response.status === 404) {
+          toast.error('Викладача не знайдено.');
+        } else if (response.status === 500) {
+          toast.error(`Помилка сервера: ${responseData.details || responseData.message || 'Невідома помилка'}`);
+        } else {
+          toast.error(`Помилка: ${response.status} - ${responseData.message || 'Невідома помилка'}`);
+        }
+        return;
+      }
+
+      // Успішна відповідь
+      console.log('✅ Заявка успішно створена:', responseData);
+      
+      const successMessage = `Заявка успішно подана!${
+        responseData.remainingApplications ? 
+        ` Залишилось заявок: ${responseData.remainingApplications}` : 
+        ''
+      }`;
+      
+      const getWorkTypeLabel = (type: 'coursework' | 'diploma' | 'practice') => {
+        switch(type) {
+          case 'coursework': return 'Курсова робота';
+          case 'diploma': return 'Дипломний проєкт';
+          case 'practice': return 'Звіт з практики';
+          default: return 'Курсова робота';
+        }
+      };
+
+      const description = `Тип роботи: ${getWorkTypeLabel(applicationFormData.workType)}\nДедлайн: ${applicationFormData.deadline}\n\n✅ Кількість доступних місць у викладача оновлено`;
+      
+      toast.success(successMessage, {
+        duration: 7000,
+        description: description
+      });
+
+      // Відправляємо подію для оновлення TeacherApplications
+      window.dispatchEvent(new CustomEvent('applicationCreated', {
+        detail: { 
+          teacherId: applicationFormData.teacherId,
+          applicationData: responseData
+        }
+      }));
+
+      // Закриваємо форму та скидаємо дані
+      handleCloseApplicationForm();
+      
+      // Оновлюємо інформацію про студента
+      setTimeout(async () => {
+        const updatedStudentInfo = await getStudentInfo();
+        if (updatedStudentInfo) {
+          setStudentInfo(updatedStudentInfo);
+        }
+      }, 1000);
+
+    } catch (error) {
+      console.error('❌ Помилка підключення до сервера:', error);
+      
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        toast.error('Проблема з підключенням до сервера. Перевірте інтернет-з\'єднання.');
+      } else if (error instanceof SyntaxError) {
+        toast.error('Помилка обробки відповіді сервера.');
+      } else {
+        toast.error('Невідома помилка підключення. Спробуйте ще раз.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Функція для отримання дедлайну за типом роботи
+  const getDefaultDeadlineByType = (workType: 'coursework' | 'diploma' | 'practice'): string => {
+    const date = new Date();
+    
+    switch(workType) {
+      case 'practice':
+        date.setMonth(date.getMonth() + 1);
+        break;
+      case 'coursework':
+        date.setMonth(date.getMonth() + 3);
+        break;
+      case 'diploma':
+        date.setMonth(date.getMonth() + 6);
+        break;
+      default:
+        date.setMonth(date.getMonth() + 3);
+    }
+    
+    return date.toISOString().split('T')[0];
+  };
+
+  // Оновлення дедлайну при зміні типу роботи
+  useEffect(() => {
+    if (showApplicationForm && applicationFormData.workType) {
+      const newDeadline = getDefaultDeadlineByType(applicationFormData.workType);
+      setApplicationFormData(prev => ({
+        ...prev,
+        deadline: newDeadline
+      }));
+    }
+  }, [applicationFormData.workType, showApplicationForm]);
+
   // Отримання унікальних кафедр
   const departments = [...new Set(teachers.map(teacher => teacher.department))];
 
@@ -429,13 +900,6 @@ const AllTeachersPage = () => {
       setSelectedTeacherId(teacherId);
       setTeacherModalOpen(true);
     }
-  };
-
-  const handleContactTeacher = (teacher: Teacher) => {
-    const subject = topic ? `Запит щодо керівництва: ${topic}` : 'Запит щодо керівництва';
-    const body = `Шановний(а) ${teacher.name},\n\nЯ зацікавлений(а) у вашому керівництві для наукової роботи.\n\nЗ повагою,\n[Ваше ім'я]`;
-    
-    window.open(`mailto:${teacher.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
   const clearFilters = () => {
@@ -465,6 +929,300 @@ const AllTeachersPage = () => {
       setIsLoading(false);
     };
   }, []);
+
+  // Рендер форми заявки
+  const renderApplicationForm = () => {
+    if (!showApplicationForm || !selectedTeacherForApplication) return null;
+
+    const getWorkTypeLabel = (type: 'coursework' | 'diploma' | 'practice') => {
+      switch(type) {
+        case 'coursework': return 'Курсова робота';
+        case 'diploma': return 'Дипломний проєкт';
+        case 'practice': return 'Звіт з практики';
+        default: return 'Курсова робота';
+      }
+    };
+
+    const getWorkTypeColor = (type: 'coursework' | 'diploma' | 'practice') => {
+      switch(type) {
+        case 'coursework': return 'bg-green-100 text-green-800 border-green-200';
+        case 'diploma': return 'bg-purple-100 text-purple-800 border-purple-200';
+        case 'practice': return 'bg-blue-100 text-blue-800 border-blue-200';
+        default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      }
+    };
+
+    const isFormReady = () => {
+      const requiredFields = [
+        applicationFormData.topic.trim(),
+        applicationFormData.description.trim(),
+        applicationFormData.goals.trim(),
+        applicationFormData.requirements.trim(),
+        applicationFormData.student_name.trim(),
+        applicationFormData.student_email.trim()
+      ];
+      
+      return requiredFields.every(field => field.length > 0) && 
+             applicationFormData.teacherId && 
+             studentInfo?.specialty_id && 
+             studentInfo?.course;
+    };
+
+    return (
+      <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <CardTitle className="flex items-center gap-2">
+                <Send className="w-5 h-5 text-primary" />
+                Заявка на керівництво
+                {applicationFormData.workType && (
+                  <Badge className={getWorkTypeColor(applicationFormData.workType)}>
+                    {getWorkTypeLabel(applicationFormData.workType)}
+                  </Badge>
+                )}
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCloseApplicationForm}
+                disabled={isSubmitting}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <CardDescription>
+              Заповніть форму для подачі заявки на керівництво
+              <div className="flex items-center gap-2 mt-2 text-sm text-blue-600">
+                <GraduationCap className="w-4 h-4" />
+                <span>Викладач: {selectedTeacherForApplication.name}</span>
+              </div>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmitApplication} className="space-y-4">
+              {/* Тип роботи */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Тип роботи *
+                </Label>
+                <Select
+                  value={applicationFormData.workType}
+                  onValueChange={(value: 'coursework' | 'diploma' | 'practice') => 
+                    handleFormDataChange('workType', value)
+                  }
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Оберіть тип роботи" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="coursework">Курсова робота</SelectItem>
+                    <SelectItem value="diploma">Дипломний проєкт</SelectItem>
+                    <SelectItem value="practice">Звіт з практики</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Тема */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Тема роботи *
+                </Label>
+                <Input
+                  value={applicationFormData.topic}
+                  onChange={(e) => handleFormDataChange('topic', e.target.value)}
+                  placeholder="Введіть тему вашої роботи"
+                  required
+                  disabled={isSubmitting}
+                />
+              </div>
+
+              {/* Опис */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Опис проекту *
+                </Label>
+                <Textarea
+                  value={applicationFormData.description}
+                  onChange={(e) => handleFormDataChange('description', e.target.value)}
+                  placeholder="Детально опишіть ваш проект, технології, які плануєте використовувати, очікувані результати"
+                  rows={3}
+                  required
+                  disabled={isSubmitting}
+                />
+              </div>
+
+              {/* Цілі */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Цілі роботи *
+                </Label>
+                <Textarea
+                  value={applicationFormData.goals}
+                  onChange={(e) => handleFormDataChange('goals', e.target.value)}
+                  placeholder="Сформулюйте основні цілі та завдання роботи"
+                  rows={2}
+                  required
+                  disabled={isSubmitting}
+                />
+              </div>
+
+              {/* Вимоги */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Вимоги до керівництва *
+                </Label>
+                <Textarea
+                  value={applicationFormData.requirements}
+                  onChange={(e) => handleFormDataChange('requirements', e.target.value)}
+                  placeholder="Вкажіть ваші очікування від керівництва (консультації, частота зустрічей тощо)"
+                  rows={2}
+                  required
+                  disabled={isSubmitting}
+                />
+              </div>
+
+              {/* Дедлайн */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">
+                  Дедлайн *
+                </Label>
+                <Input
+                  type="date"
+                  value={applicationFormData.deadline}
+                  onChange={(e) => handleFormDataChange('deadline', e.target.value)}
+                  required
+                  disabled={isSubmitting}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+
+              {/* Інформація про студента */}
+              <div className="p-4 bg-muted/30 rounded-lg space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="font-medium text-sm flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    Ваші дані
+                  </h4>
+                  <Button 
+                    type="button"
+                    variant="outline" 
+                    size="sm"
+                    onClick={async () => {
+                      const updatedStudentInfo = await getStudentInfo();
+                      if (updatedStudentInfo) {
+                        setStudentInfo(updatedStudentInfo);
+                        setApplicationFormData(prev => ({
+                          ...prev,
+                          student_name: updatedStudentInfo.name,
+                          student_email: updatedStudentInfo.email,
+                          student_phone: updatedStudentInfo.phone || '',
+                          student_program: updatedStudentInfo.program || '',
+                          student_year: updatedStudentInfo.year || '',
+                          student_group: updatedStudentInfo.group || '',
+                          student_specialty_id: updatedStudentInfo.specialty_id,
+                          student_specialty_code: updatedStudentInfo.specialty_code || '',
+                          student_faculty_id: updatedStudentInfo.faculty_id
+                        }));
+                        toast.success('Дані профілю оновлено');
+                      }
+                    }}
+                    disabled={isSubmitting}
+                  >
+                    Оновити з профілю
+                  </Button>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">ПІБ:</span>
+                    <p className="font-medium">{studentInfo?.name || 'Не вказано'}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Email:</span>
+                    <p className="font-medium">{studentInfo?.email || 'Не вказано'}</p>
+                  </div>
+                  
+                  {studentInfo?.specialty_code && (
+                    <div>
+                      <span className="text-muted-foreground">Спеціальність:</span>
+                      <p className="font-medium">
+                        {studentInfo.specialty_code}
+                        {studentInfo.specialty_name && ` - ${studentInfo.specialty_name}`}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {studentInfo?.course && (
+                    <div>
+                      <span className="text-muted-foreground">Курс:</span>
+                      <p className="font-medium">{studentInfo.course}</p>
+                    </div>
+                  )}
+                  
+                  {studentInfo?.phone && (
+                    <div>
+                      <span className="text-muted-foreground">Телефон:</span>
+                      <p className="font-medium">{studentInfo.phone}</p>
+                    </div>
+                  )}
+                  
+                  {studentInfo?.faculty_name && (
+                    <div className="md:col-span-2">
+                      <span className="text-muted-foreground">Факультет:</span>
+                      <p className="font-medium">{studentInfo.faculty_name}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <CheckCircle className="w-4 h-4 text-blue-600" />
+                  <p className="text-sm font-medium text-blue-700">
+                    Вибраний викладач: {selectedTeacherForApplication.name}
+                  </p>
+                </div>
+                <p className="text-sm text-blue-600">
+                  Заявка буде надіслана викладачу з урахуванням вашої спеціальності та курсу
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCloseApplicationForm}
+                  className="flex-1"
+                  disabled={isSubmitting}
+                >
+                  Скасувати
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                  disabled={isSubmitting || !isFormReady()}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Spinner className="w-4 h-4 mr-2 animate-spin" />
+                      Надсилання...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      Надіслати заявку
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -565,7 +1323,7 @@ const AllTeachersPage = () => {
             {/* Список викладачів */}
             {isLoading ? (
               <div className="flex flex-col justify-center items-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                <Spinner className="h-8 w-8 animate-spin text-primary mb-4" />
                 <span className="text-muted-foreground">Завантаження викладачів...</span>
                 {!currentUserFacultyId && !facultyId && (
                   <p className="text-sm text-muted-foreground mt-2 text-center max-w-md">
@@ -681,9 +1439,10 @@ const AllTeachersPage = () => {
                         </Button>
                         <Button
                           className="flex-1"
-                          onClick={() => handleContactTeacher(teacher)}
+                          onClick={() => handleOpenApplicationForm(teacher)}
                         >
-                          Написати
+                          <Target className="w-4 h-4 mr-2" />
+                          Подати заявку
                         </Button>
                         {topic && (
                           <Button
@@ -734,6 +1493,9 @@ const AllTeachersPage = () => {
         open={teacherModalOpen}
         onOpenChange={setTeacherModalOpen}
       />
+
+      {/* Форма заявки */}
+      {renderApplicationForm()}
     </div>
   );
 };

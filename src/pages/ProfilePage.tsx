@@ -23,8 +23,7 @@ import {
   Award,
   CheckCircle,
   XCircle,
-  Clock,
-  RefreshCw
+  Clock
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -452,7 +451,6 @@ export default function StudentProfile() {
     averageProgress: 0
   });
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [editedInfo, setEditedInfo] = useState<StudentInfo | null>(null);
@@ -600,7 +598,6 @@ export default function StudentProfile() {
       toast.error(t('profile.alerts.loadError'));
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
@@ -609,11 +606,6 @@ export default function StudentProfile() {
     fetchAllData();
   }, [t]);
 
-  // Функція оновлення даних
-  const refreshData = async () => {
-    setRefreshing(true);
-    await fetchAllData();
-  };
 
   const handleSaveInfo = async () => {
     if (!editedInfo) return;
@@ -1093,10 +1085,6 @@ export default function StudentProfile() {
                   Перевірте підключення до сервера та авторизацію
                 </p>
               </div>
-              <Button onClick={refreshData} className="mt-4">
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Спробувати знову
-              </Button>
             </div>
           </main>
         </div>
@@ -1188,19 +1176,6 @@ export default function StudentProfile() {
                       Особиста інформація та академічні досягнення
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={refreshData}
-                    disabled={refreshing}
-                  >
-                    {refreshing ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    Оновити дані
-                  </Button>
                 </div>
 
                 {/* Статистика - показуємо тільки якщо є дані */}

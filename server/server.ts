@@ -6916,6 +6916,54 @@ app.get("/api/student/applications/:id", authenticateToken, async (req: Request,
 });
 
 
+app.delete("/api/student/applications/:id", authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    const applicationId = req.params.id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    // Перевірка, чи заявка належить студенту
+    const applicationCheck = await pool.query(
+      'SELECT id, status FROM student_applications WHERE id = $1 AND student_id = $2',
+      [applicationId, userId]
+    );
+
+    if (applicationCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    const application = applicationCheck.rows[0];
+    
+    // Не дозволяємо видаляти прийняті або відхилені заявки
+    if (application.status !== 'pending') {
+      return res.status(400).json({ 
+        message: "Cannot delete application that is already processed",
+        currentStatus: application.status
+      });
+    }
+
+    // Видалення заявки
+    await pool.query(
+      'DELETE FROM student_applications WHERE id = $1 AND student_id = $2',
+      [applicationId, userId]
+    );
+
+    res.json({
+      message: "Application deleted successfully",
+      success: true
+    });
+
+  } catch (err) {
+    console.error('❌ Error deleting application:', err);
+    res.status(500).json({ 
+      message: "Internal server error", 
+      error: err.message 
+    });
+  }
+});
 
 
 // Middleware для перевірки, чи є користувач викладачем
@@ -7262,54 +7310,6 @@ app.patch("/api/teacher/applications/:id/status", authenticateToken, async (req:
   }
 });
 
-app.delete("/api/student/applications/:id", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    const applicationId = req.params.id;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    // Перевірка, чи заявка належить студенту
-    const applicationCheck = await pool.query(
-      'SELECT id, status FROM student_applications WHERE id = $1 AND student_id = $2',
-      [applicationId, userId]
-    );
-
-    if (applicationCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Application not found" });
-    }
-
-    const application = applicationCheck.rows[0];
-    
-    // Не дозволяємо видаляти прийняті або відхилені заявки
-    if (application.status !== 'pending') {
-      return res.status(400).json({ 
-        message: "Cannot delete application that is already processed",
-        currentStatus: application.status
-      });
-    }
-
-    // Видалення заявки
-    await pool.query(
-      'DELETE FROM student_applications WHERE id = $1 AND student_id = $2',
-      [applicationId, userId]
-    );
-
-    res.json({
-      message: "Application deleted successfully",
-      success: true
-    });
-
-  } catch (err) {
-    console.error('❌ Error deleting application:', err);
-    res.status(500).json({ 
-      message: "Internal server error", 
-      error: err.message 
-    });
-  }
-});
 
 // GET /api/teacher/places - отримати доступні місця поточного викладача
 app.get("/api/teacher/places", authenticateToken, async (req: Request, res: Response) => {

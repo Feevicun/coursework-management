@@ -16,7 +16,6 @@ import {
   Mail,
   X,
   Phone,
-  RefreshCw,
   GraduationCap,
   BookOpen,
   Briefcase,
@@ -1441,18 +1440,6 @@ const TeacherApplications = () => {
     rejected: applications.filter(app => app.status === "rejected").length
   };
 
-  const workTypeStats = {
-    coursework: applications.filter(app => app.workType === 'coursework').length,
-    diploma: applications.filter(app => app.workType === 'diploma').length,
-    practice: applications.filter(app => app.workType === 'practice').length
-  };
-
-  const refreshApplications = () => {
-    if (currentTeacherId) {
-      fetchApplications(currentTeacherId);
-      toast.info('Оновлення списку заявок...');
-    }
-  };
 
   const getStatusBadge = (status: ApplicationStatus) => {
     let config;
@@ -1575,14 +1562,6 @@ const TeacherApplications = () => {
                   </SelectContent>
                 </Select>
 
-                <Button 
-                  variant="outline" 
-                  size="icon"
-                  onClick={refreshApplications}
-                  disabled={isLoading}
-                >
-                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                </Button>
               </div>
             </div>
 
@@ -1656,72 +1635,6 @@ const TeacherApplications = () => {
                       </p>
                     </div>
                     <FileCheck className="h-6 w-6 text-indigo-500" />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Статистика за типами робіт */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="bg-card border border-green-200">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-green-100 rounded-lg">
-                        <BookOpen className="h-5 w-5 text-green-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Курсові</p>
-                        <p className="text-xl font-bold text-green-700">{workTypeStats.coursework}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="outline" className="bg-green-50 text-green-700">
-                        {workTypeStats.coursework > 0 ? Math.round((workTypeStats.coursework / stats.total) * 100) : 0}%
-                      </Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card border border-purple-200">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-purple-100 rounded-lg">
-                        <GraduationCap className="h-5 w-5 text-purple-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Дипломні</p>
-                        <p className="text-xl font-bold text-purple-700">{workTypeStats.diploma}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="outline" className="bg-purple-50 text-purple-700">
-                        {workTypeStats.diploma > 0 ? Math.round((workTypeStats.diploma / stats.total) * 100) : 0}%
-                      </Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card border border-blue-200">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-blue-100 rounded-lg">
-                        <Briefcase className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Практики</p>
-                        <p className="text-xl font-bold text-blue-700">{workTypeStats.practice}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                        {workTypeStats.practice > 0 ? Math.round((workTypeStats.practice / stats.total) * 100) : 0}%
-                      </Badge>
-                    </div>
                   </div>
                 </CardContent>
               </Card>

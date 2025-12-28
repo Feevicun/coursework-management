@@ -32,11 +32,9 @@ import {
   Upload,
   Clock,
   ListChecks,
-  RefreshCw
 } from 'lucide-react';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
-import { toast } from "sonner";
 
 interface Student {
   id: string;
@@ -528,13 +526,6 @@ useEffect(() => {
   };
 }, []);
 
-// Функція для оновлення списку студентів
-const refreshStudents = async () => {
-  console.log('Manual refresh triggered');
-  await fetchStudentsFromAPI();
-  checkAndSyncData();
-  toast.success('Список студентів оновлено');
-};
 
   // Статистика для карток - на основі реальних даних
   const quickStats = [
@@ -741,16 +732,6 @@ const refreshStudents = async () => {
                                 </Button>
                               </div>
 
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-xs h-8"
-                                onClick={refreshStudents}
-                                title="Синхронізувати дані"
-                              >
-                                <RefreshCw className="w-3 h-3 mr-1" />
-                                Синхронізувати
-                              </Button>
                             </>
                           )}
                         </div>

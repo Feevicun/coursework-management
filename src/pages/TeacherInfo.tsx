@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Plus, Award, Target, Trash2, Lightbulb, Edit, Users, GraduationCap, BookOpen, Calendar, Loader2, RefreshCw, Shield, Info } from "lucide-react";
+import { Plus, Award, Target, Trash2, Lightbulb, Edit, Users, GraduationCap, BookOpen, Calendar, Loader2, Shield, Info } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -139,7 +139,7 @@ export default function TeacherInfo() {
   const [availablePlaces, setAvailablePlaces] = useState<AvailablePlace[]>([]);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [, setUserId] = useState<string | null>(null);
   const [teacherId, setTeacherId] = useState<number | null>(null);
   const [teacherStats, setTeacherStats] = useState<{
     totalPlaces: number;
@@ -175,7 +175,7 @@ export default function TeacherInfo() {
   const [itemToDelete, setItemToDelete] = useState<{ type: string; id: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedSpecialty, setSelectedSpecialty] = useState<number | null>(null);
-  const [isRefreshingPlaces, setIsRefreshingPlaces] = useState(false);
+  const [, setIsRefreshingPlaces] = useState(false);
 
   // Стани для додавання нових елементів
   const [newWork, setNewWork] = useState<Omit<Work, "id">>({
@@ -1662,48 +1662,6 @@ const refreshAvailablePlaces = async () => {
           <ScrollArea className="h-[calc(100vh-4rem)]">
             <div className="min-h-screen bg-background">
               <div className="max-w-7xl mx-auto p-6 lg:p-8 space-y-8">
-                {/* Debug Information */}
-                <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-                  <h3 className="font-bold text-blue-800 dark:text-blue-300 mb-2">🔍 Інформація для налагодження</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">👤 User ID:</span>
-                      <span className="ml-2 font-medium">{userId || 'не знайдено'}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">👨‍🏫 Teacher ID:</span>
-                      <span className="ml-2 font-medium">{teacherId || 'не знайдено'}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">📚 Місця:</span>
-                      <span className="ml-2 font-medium">{availablePlaces.length}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">📋 Спеціальності:</span>
-                      <span className="ml-2 font-medium">{specialties.length}</span>
-                    </div>
-                    <div className="col-span-2 md:col-span-4">
-                      <span className="text-muted-foreground">📊 Статистика:</span>
-                      <span className="ml-2 font-medium">
-                        {teacherStats.totalPlaces} всього, {teacherStats.availablePlaces} доступно, {teacherStats.takenPlaces} зайнято ({teacherStats.occupancyPercentage}%)
-                      </span>
-                    </div>
-                  </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={refreshAvailablePlaces}
-                    disabled={isRefreshingPlaces}
-                    className="mt-2"
-                  >
-                    {isRefreshingPlaces ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3 h-3 mr-1" />
-                    )}
-                    Оновити місця
-                  </Button>
-                </div>
 
                 <div className="mb-10">
                   <h1 className="text-4xl font-bold mb-3 text-foreground">
@@ -1792,19 +1750,6 @@ const refreshAvailablePlaces = async () => {
                   title={t('teacherProfile.sections.availablePlaces')}
                   actionButton={
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={refreshAvailablePlaces}
-                        disabled={isRefreshingPlaces}
-                      >
-                        {isRefreshingPlaces ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                        )}
-                        {t('teacherProfile.actions.refresh')}
-                      </Button>
                       <AddPlaceButton />
                     </div>
                   }
