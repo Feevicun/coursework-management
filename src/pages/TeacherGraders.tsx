@@ -3,10 +3,29 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { MessageSquare, Calendar, Download, CheckCircle, Clock, FileText, AlertCircle, Users, Star, Edit, X, Send, ChevronDown, Loader2, GraduationCap, User, ArrowRight, Eye, History, Bell } from 'lucide-react';
+import { MessageSquare, Calendar, Download, CheckCircle, Clock, FileText, AlertCircle, Users, Star, Edit, X, Send, ChevronDown, Loader2, GraduationCap, User, ArrowRight, Eye, History, Bell, Trash2 } from 'lucide-react';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import { useState, useEffect } from 'react';
+
+interface TeacherInfo {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  department: string;
+  avatar?: string;
+}
+
+interface DeadlineInfo {
+  chapterId: number;
+  chapterKey: string;
+  deadline: string;
+  assignedBy: string;
+  assignedAt: string;
+  isCompleted: boolean;
+  chapterTitle?: string;
+}
 
 interface Student {
   id: string;
@@ -27,8 +46,11 @@ interface Student {
   unreadComments: number;
   projectType: 'diploma' | 'coursework' | 'practice';
   teacherId?: string;
+  supervisor?: TeacherInfo;
+  deadlines?: DeadlineInfo[];
   hasPendingReview?: boolean;
   lastSubmissionDate?: string;
+  overallDeadline?: string;
 }
 
 interface Comment {
@@ -72,6 +94,8 @@ interface Chapter {
   gradedBy?: string;
   gradedAt?: string;
   submittedForReviewAt?: string;
+  chapterDeadline?: string;
+  deadlineStatus?: 'normal' | 'warning' | 'urgent' | 'overdue' | 'completed';
 }
 
 interface CommentSectionProps {
@@ -104,6 +128,15 @@ interface GradeModalProps {
   onClose: () => void;
   chapter: Chapter | null;
   onGradeSubmit: (chapterId: number, grade: number, feedback?: string) => void;
+}
+
+interface DeadlineModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  student: Student | null;
+  chapters: Chapter[];
+  onSetOverallDeadline: (studentId: string, deadline: string) => void;
+  onSetChapterDeadline: (chapterId: number, deadline: string, studentId: string) => void;
 }
 
 // Функція для отримання токену
@@ -141,6 +174,34 @@ const getCurrentUserId = (): string | null => {
   }
   return null;
 };
+
+// Функція для отримання поточного користувача
+// const getCurrentUser = (): { id: string; name: string; role: string } | null => {
+//   if (typeof window !== 'undefined') {
+//     const currentUser = localStorage.getItem('currentUser') || 
+//                        sessionStorage.getItem('currentUser');
+    
+//     if (currentUser) {
+//       try {
+//         const userData = JSON.parse(currentUser);
+//         return {
+//           id: userData.id?.toString() || '',
+//           name: userData.name || 'Викладач',
+//           role: userData.role || 'teacher'
+//         };
+//       } catch {
+//         // Ігноруємо помилку парсингу
+//       }
+//     }
+    
+//     return {
+//       id: getCurrentUserId() || 'teacher-1',
+//       name: 'Викладач',
+//       role: 'teacher'
+//     };
+//   }
+//   return null;
+// };
 
 // Функція для безпечного парсингу JSON
 const safeJsonParse = (text: string) => {
@@ -237,6 +298,254 @@ const getCommentBadgeStyle = (status: Comment['status']) => {
     default:
       return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400';
   }
+};
+
+const getDeadlineStatusColor = (status: string) => {
+  switch (status) {
+    case 'completed':
+      return 'bg-green-100 text-green-800 border-green-200';
+    case 'overdue':
+      return 'bg-red-100 text-red-800 border-red-200';
+    case 'urgent':
+      return 'bg-orange-100 text-orange-800 border-orange-200';
+    case 'warning':
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    default:
+      return 'bg-blue-100 text-blue-800 border-blue-200';
+  }
+};
+
+// Модальне вікно керування дедлайнами
+const DeadlineModal = ({ 
+  isOpen, 
+  onClose, 
+  student, 
+  chapters,
+  onSetOverallDeadline,
+  onSetChapterDeadline
+}: DeadlineModalProps) => {
+  const [overallDeadline, setOverallDeadline] = useState(student?.overallDeadline || '');
+  const [chapterDeadlines, setChapterDeadlines] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (student) {
+      setOverallDeadline(student.overallDeadline || '');
+      
+      // Ініціалізація дедлайнів розділів
+      const initialDeadlines: Record<number, string> = {};
+      student.deadlines?.forEach(deadline => {
+        initialDeadlines[deadline.chapterId] = deadline.deadline;
+      });
+      setChapterDeadlines(initialDeadlines);
+    }
+  }, [student]);
+
+  const handleSaveDeadlines = async () => {
+    if (!student) return;
+
+    if (overallDeadline && overallDeadline !== student.overallDeadline) {
+      await onSetOverallDeadline(student.id, overallDeadline);
+    }
+
+    // Зберігаємо дедлайни розділів
+    for (const [chapterId, deadline] of Object.entries(chapterDeadlines)) {
+      if (deadline) {
+        await onSetChapterDeadline(Number(chapterId), deadline, student.id);
+      }
+    }
+
+    onClose();
+  };
+
+  const handleDeleteChapterDeadline = async (chapterId: number) => {
+    if (!student) return;
+
+    // Видаляємо дедлайн через API
+    await onSetChapterDeadline(chapterId, '', student.id);
+    
+    // Оновлюємо локальний стан
+    setChapterDeadlines(prev => {
+      const newDeadlines = { ...prev };
+      delete newDeadlines[chapterId];
+      return newDeadlines;
+    });
+  };
+
+  const handleDeleteOverallDeadline = async () => {
+    if (!student) return;
+
+    // Видаляємо загальний дедлайн через API
+    await onSetOverallDeadline(student.id, '');
+    setOverallDeadline('');
+  };
+
+  if (!isOpen || !student) return null;
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('uk-UA');
+  };
+
+  const getDaysRemaining = (deadline: string) => {
+    const today = new Date();
+    const deadlineDate = new Date(deadline);
+    const diffTime = deadlineDate.getTime() - today.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Calendar className="w-5 h-5" />
+            Керування дедлайнами - {student.name}
+          </h3>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            ×
+          </Button>
+        </div>
+        
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+          {/* Загальний дедлайн */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium text-lg">Загальний дедлайн роботи</h4>
+              {overallDeadline && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDeleteOverallDeadline}
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  Видалити
+                </Button>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Новий дедлайн
+                </label>
+                <input
+                  type="date"
+                  value={overallDeadline}
+                  onChange={(e) => setOverallDeadline(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              
+              {overallDeadline && (
+                <div className="p-3 border border-gray-200 rounded-lg bg-gray-50">
+                  <p className="text-sm font-medium">Поточний дедлайн:</p>
+                  <p className="text-lg font-semibold">{formatDate(overallDeadline)}</p>
+                  <p className={`text-sm ${
+                    getDaysRemaining(overallDeadline) < 0 ? 'text-red-600' : 
+                    getDaysRemaining(overallDeadline) <= 7 ? 'text-orange-600' : 'text-green-600'
+                  }`}>
+                    {getDaysRemaining(overallDeadline) >= 0 
+                      ? `Залишилось днів: ${getDaysRemaining(overallDeadline)}`
+                      : `Прострочено на: ${Math.abs(getDaysRemaining(overallDeadline))} днів`
+                    }
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Дедлайни розділів */}
+          <div className="space-y-4">
+            <h4 className="font-medium text-lg">Дедлайни розділів</h4>
+            <div className="space-y-3">
+              {chapters.map(chapter => {
+                const currentDeadline = chapterDeadlines[chapter.id];
+                const daysRemaining = currentDeadline ? getDaysRemaining(currentDeadline) : null;
+                
+                return (
+                  <div key={chapter.id} className="p-4 border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="font-medium">{chapter.title}</p>
+                        <p className="text-sm text-gray-600">{chapter.description}</p>
+                      </div>
+                      {currentDeadline && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDeleteChapterDeadline(chapter.id)}
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Дедлайн розділу
+                        </label>
+                        <input
+                          type="date"
+                          value={currentDeadline || ''}
+                          onChange={(e) => setChapterDeadlines(prev => ({
+                            ...prev,
+                            [chapter.id]: e.target.value
+                          }))}
+                          className="w-full p-2 border border-gray-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                      
+                      {currentDeadline && (
+                        <div className="p-3 border border-gray-200 rounded-lg bg-gray-50">
+                          <p className="text-sm font-medium">Поточний дедлайн:</p>
+                          <p className="font-semibold">{formatDate(currentDeadline)}</p>
+                          <p className={`text-sm ${
+                            daysRemaining && daysRemaining < 0 ? 'text-red-600' : 
+                            daysRemaining && daysRemaining <= 3 ? 'text-orange-600' : 'text-green-600'
+                          }`}>
+                            {daysRemaining && daysRemaining >= 0 
+                              ? `Залишилось днів: ${daysRemaining}`
+                              : daysRemaining && `Прострочено на: ${Math.abs(daysRemaining)} днів`
+                            }
+                          </p>
+                          <Badge className={`mt-1 ${getDeadlineStatusColor(
+                            chapter.status === 'completed' ? 'completed' :
+                            daysRemaining && daysRemaining < 0 ? 'overdue' :
+                            daysRemaining && daysRemaining <= 3 ? 'urgent' :
+                            daysRemaining && daysRemaining <= 7 ? 'warning' : 'normal'
+                          )}`}>
+                            {chapter.status === 'completed' ? 'Виконано' :
+                             daysRemaining && daysRemaining < 0 ? 'Прострочено' :
+                             daysRemaining && daysRemaining <= 3 ? 'Терміново' :
+                             daysRemaining && daysRemaining <= 7 ? 'Закінчується' : 'Активний'}
+                          </Badge>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 p-4 border-t">
+          <Button variant="outline" onClick={onClose}>
+            Скасувати
+          </Button>
+          <Button 
+            onClick={handleSaveDeadlines}
+            className="bg-blue-600 text-white hover:bg-blue-700"
+          >
+            <CheckCircle className="w-4 h-4 mr-2" />
+            Зберегти дедлайни
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // Модальне вікно історії файлів
@@ -466,6 +775,12 @@ const WelcomeScreen = ({
   loading: boolean;
 }) => {
   const pendingReviewsCount = students.filter(s => s.hasPendingReview).length;
+  const overdueDeadlinesCount = students.filter(student => 
+    student.deadlines?.some(deadline => {
+      const daysRemaining = Math.ceil((new Date(deadline.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+      return daysRemaining < 0 && !deadline.isCompleted;
+    })
+  ).length;
 
   return (
     <div className="max-w-6xl mx-auto py-8 px-4">
@@ -478,14 +793,24 @@ const WelcomeScreen = ({
           Оберіть студента для перегляду та оцінювання його роботи. Тут ви можете залишати коментарі, виставляти оцінки та відстежувати прогрес.
         </p>
         
-        {pendingReviewsCount > 0 && (
-          <div className="mt-4 inline-flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-full px-4 py-2">
-            <Bell className="w-4 h-4 text-yellow-600" />
-            <span className="text-yellow-800 font-medium">
-              {pendingReviewsCount} робіт очікують на перевірку
-            </span>
-          </div>
-        )}
+        <div className="mt-4 flex flex-wrap gap-2 justify-center">
+          {pendingReviewsCount > 0 && (
+            <div className="inline-flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-full px-4 py-2">
+              <Bell className="w-4 h-4 text-yellow-600" />
+              <span className="text-yellow-800 font-medium">
+                {pendingReviewsCount} робіт очікують на перевірку
+              </span>
+            </div>
+          )}
+          {overdueDeadlinesCount > 0 && (
+            <div className="inline-flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2">
+              <Calendar className="w-4 h-4 text-red-600" />
+              <span className="text-red-800 font-medium">
+                {overdueDeadlinesCount} прострочених дедлайнів
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -510,72 +835,86 @@ const WelcomeScreen = ({
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-            {students.map((student) => (
-              <Card 
-                key={student.id} 
-                className={`bg-card border hover:shadow-lg transition-all duration-200 cursor-pointer ${
-                  student.hasPendingReview 
-                    ? 'border-yellow-400 bg-yellow-50/50 hover:border-yellow-500' 
-                    : 'border-border hover:border-primary/50'
-                }`}
-                onClick={() => onSelectStudent(student)}
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
-                      <User className="w-6 h-6 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-base truncate">{student.name}</CardTitle>
-                        {student.hasPendingReview && (
-                          <Badge variant="destructive" className="text-xs">
-                            На перевірці
-                          </Badge>
-                        )}
+            {students.map((student) => {
+              const overdueDeadlines = student.deadlines?.filter(deadline => {
+                const daysRemaining = Math.ceil((new Date(deadline.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                return daysRemaining < 0 && !deadline.isCompleted;
+              }).length || 0;
+
+              return (
+                <Card 
+                  key={student.id} 
+                  className={`bg-card border hover:shadow-lg transition-all duration-200 cursor-pointer ${
+                    student.hasPendingReview 
+                      ? 'border-yellow-400 bg-yellow-50/50 hover:border-yellow-500' 
+                      : overdueDeadlines > 0
+                      ? 'border-red-400 bg-red-50/50 hover:border-red-500'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => onSelectStudent(student)}
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
+                        <User className="w-6 h-6 text-primary" />
                       </div>
-                      <CardDescription className="text-sm truncate">
-                        {student.course} курс • {student.specialty}
-                      </CardDescription>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-base truncate">{student.name}</CardTitle>
+                          {student.hasPendingReview && (
+                            <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">
+                              На перевірці
+                            </Badge>
+                          )}
+                          {overdueDeadlines > 0 && (
+                            <Badge variant="destructive" className="text-xs">
+                              {overdueDeadlines} прострочено
+                            </Badge>
+                          )}
+                        </div>
+                        <CardDescription className="text-sm truncate">
+                          {student.course} курс • {student.specialty}
+                        </CardDescription>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Прогрес:</span>
-                    <span className="font-semibold text-foreground">{student.progress}%</span>
-                  </div>
-                  <Progress value={student.progress} className="h-2" />
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Оцінка:</span>
-                    <span className="font-bold text-primary">{student.grade}/100</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Тип роботи:</span>
-                    <span className={`px-2 py-1 rounded-full text-xs ${
-                      student.workType === 'coursework' 
-                        ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
-                        : 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
-                    }`}>
-                      {student.workType === 'coursework' ? 'Курсова' : 'Дипломна'}
-                    </span>
-                  </div>
-                  {student.lastSubmissionDate && (
-                    <div className="text-xs text-muted-foreground">
-                      Надіслано: {new Date(student.lastSubmissionDate).toLocaleDateString('uk-UA')}
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Прогрес:</span>
+                      <span className="font-semibold text-foreground">{student.progress}%</span>
                     </div>
-                  )}
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="w-full mt-2 border-border text-foreground hover:bg-accent"
-                  >
-                    <ArrowRight className="w-4 h-4 mr-2" />
-                    Переглянути роботу
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
+                    <Progress value={student.progress} className="h-2" />
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Оцінка:</span>
+                      <span className="font-bold text-primary">{student.grade}/100</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Тип роботи:</span>
+                      <span className={`px-2 py-1 rounded-full text-xs ${
+                        student.workType === 'coursework' 
+                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
+                          : 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
+                      }`}>
+                        {student.workType === 'coursework' ? 'Курсова' : 'Дипломна'}
+                      </span>
+                    </div>
+                    {student.overallDeadline && (
+                      <div className="text-xs text-muted-foreground">
+                        Дедлайн: {new Date(student.overallDeadline).toLocaleDateString('uk-UA')}
+                      </div>
+                    )}
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full mt-2 border-border text-foreground hover:bg-accent"
+                    >
+                      <ArrowRight className="w-4 h-4 mr-2" />
+                      Переглянути роботу
+                    </Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </>
       )}
@@ -810,27 +1149,39 @@ const StudentSelect = ({ students, selectedStudent, onSelect, loading }: Student
       
       {isOpen && (
         <div className="absolute top-full right-0 mt-1 w-64 bg-card border border-border rounded-lg shadow-lg z-20 max-h-60 overflow-y-auto">
-          {students.map(student => (
-            <button
-              key={student.id}
-              onClick={() => {
-                onSelect(student);
-                setIsOpen(false);
-                window.history.pushState({}, '', `/teacher/grades?studentId=${student.id}`);
-              }}
-              className="w-full px-4 py-2 text-left hover:bg-accent first:rounded-t-lg last:rounded-b-lg border-b border-border last:border-b-0"
-            >
-              <div className="flex items-center justify-between">
-                <div className="font-medium text-foreground">{student.name}</div>
-                {student.hasPendingReview && (
-                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                )}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {student.workType === 'coursework' ? 'Курсова' : 'Дипломна'} • {student.progress}%
-              </div>
-            </button>
-          ))}
+          {students.map(student => {
+            const overdueDeadlines = student.deadlines?.filter(deadline => {
+              const daysRemaining = Math.ceil((new Date(deadline.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+              return daysRemaining < 0 && !deadline.isCompleted;
+            }).length || 0;
+
+            return (
+              <button
+                key={student.id}
+                onClick={() => {
+                  onSelect(student);
+                  setIsOpen(false);
+                  window.history.pushState({}, '', `/teacher/grades?studentId=${student.id}`);
+                }}
+                className="w-full px-4 py-2 text-left hover:bg-accent first:rounded-t-lg last:rounded-b-lg border-b border-border last:border-b-0"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-foreground">{student.name}</div>
+                  <div className="flex items-center gap-1">
+                    {student.hasPendingReview && (
+                      <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                    )}
+                    {overdueDeadlines > 0 && (
+                      <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {student.workType === 'coursework' ? 'Курсова' : 'Дипломна'} • {student.progress}%
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -869,6 +1220,8 @@ interface ApiStudent {
   projectType?: 'diploma' | 'coursework' | 'practice';
   has_pending_review?: boolean;
   last_submission_date?: string;
+  overall_deadline?: string;
+  deadlines?: any[];
 }
 
 interface ApiChapter {
@@ -913,6 +1266,7 @@ interface ApiChapter {
   graded_by?: string;
   graded_at?: string;
   submitted_for_review_at?: string;
+  chapter_deadline?: string;
 }
 
 const TeacherGrades = () => {
@@ -938,6 +1292,13 @@ const TeacherGrades = () => {
   }>({
     isOpen: false,
     chapter: null
+  });
+  const [deadlineModal, setDeadlineModal] = useState<{
+    isOpen: boolean;
+    student: Student | null;
+  }>({
+    isOpen: false,
+    student: null
   });
 
   // Функція для створення базової структури розділів
@@ -1040,7 +1401,9 @@ const TeacherGrades = () => {
               projectType: student.project_type || student.projectType || 'coursework',
               teacherId: teacherId,
               hasPendingReview: student.has_pending_review || false,
-              lastSubmissionDate: student.last_submission_date || ''
+              lastSubmissionDate: student.last_submission_date || '',
+              overallDeadline: student.overall_deadline || '',
+              deadlines: student.deadlines || []
             })).filter(student => student.id && student.name);
           }
         } catch (error) {
@@ -1174,7 +1537,8 @@ const TeacherGrades = () => {
             })) : [],
             gradedBy: chapter.graded_by,
             gradedAt: chapter.graded_at,
-            submittedForReviewAt: chapter.submitted_for_review_at
+            submittedForReviewAt: chapter.submitted_for_review_at,
+            chapterDeadline: chapter.chapter_deadline
           }));
         }
       } catch (error) {
@@ -1402,6 +1766,119 @@ const TeacherGrades = () => {
     }
   };
 
+  // Функція для встановлення дедлайну розділу
+  const handleSetChapterDeadline = async (chapterId: number, deadline: string, studentId: string) => {
+    try {
+      const chapter = chaptersData.find(ch => ch.id === chapterId);
+      if (!chapter) return;
+
+      // Оновлення через API
+      await safeFetch(`/api/thesis-tracker/chapter/${chapterId}/deadline`, {
+        method: 'POST',
+        body: JSON.stringify({
+          studentId,
+          deadline,
+          assignedBy: getCurrentUserId(),
+          chapterKey: chapter.key
+        })
+      });
+
+      // Оновлення локального стану
+      setStudents(prev =>
+        prev.map(student =>
+          student.id === studentId
+            ? {
+                ...student,
+                deadlines: [
+                  ...(student.deadlines || []).filter(d => d.chapterId !== chapterId),
+                  ...(deadline ? [{
+                    chapterId,
+                    chapterKey: chapter.key,
+                    deadline,
+                    assignedBy: 'Викладач',
+                    assignedAt: new Date().toISOString(),
+                    isCompleted: false
+                  }] : [])
+                ]
+              }
+            : student
+        )
+      );
+
+      // Оновлення глав
+      setChaptersData(prev =>
+        prev.map(ch =>
+          ch.id === chapterId
+            ? { ...ch, chapterDeadline: deadline }
+            : ch
+        )
+      );
+
+      // Сповіщення студента
+      if (deadline) {
+        await safeFetch('/api/notify-student', {
+          method: 'POST',
+          body: JSON.stringify({
+            studentId: studentId,
+            type: 'deadline_assigned',
+            chapterId: chapterId,
+            chapterTitle: chapter.title,
+            deadline: deadline,
+            teacherName: 'Викладач'
+          })
+        });
+      }
+
+      // Сповіщаємо про оновлення дедлайнів
+      window.dispatchEvent(new CustomEvent('deadlineUpdated'));
+
+      console.log(`Дедлайн ${deadline ? 'встановлено' : 'видалено'} для розділу ${chapterId}`);
+    } catch (error) {
+      console.error('Помилка встановлення дедлайну:', error);
+    }
+  };
+
+  // Функція для встановлення загального дедлайну
+  const handleSetOverallDeadline = async (studentId: string, deadline: string) => {
+    try {
+      await safeFetch(`/api/thesis-tracker/student/${studentId}/deadline`, {
+        method: 'POST',
+        body: JSON.stringify({
+          deadline,
+          assignedBy: getCurrentUserId()
+        })
+      });
+
+      setStudents(prev =>
+        prev.map(student =>
+          student.id === studentId
+            ? { ...student, overallDeadline: deadline }
+            : student
+        )
+      );
+
+      // Сповіщення студента
+      if (deadline) {
+        await safeFetch('/api/notify-student', {
+          method: 'POST',
+          body: JSON.stringify({
+            studentId: studentId,
+            type: 'overall_deadline_assigned',
+            deadline: deadline,
+            teacherName: 'Викладач'
+          })
+        });
+      }
+
+      // Сповіщаємо про оновлення дедлайнів
+      window.dispatchEvent(new CustomEvent('deadlineUpdated'));
+
+      console.log(`Загальний дедлайн ${deadline ? 'встановлено' : 'видалено'} для студента ${studentId}`);
+    } catch (error) {
+      console.error('Помилка встановлення загального дедлайну:', error);
+    }
+  };
+
   const handleSelectStudent = (student: Student) => {
     setSelectedStudent(student);
     window.history.pushState({}, '', `/teacher/grades?studentId=${student.id}`);
@@ -1431,12 +1908,40 @@ const TeacherGrades = () => {
     });
   };
 
+  const showDeadlineModal = (student: Student) => {
+    setDeadlineModal({
+      isOpen: true,
+      student: student
+    });
+  };
+
   const handleDownloadFile = (chapterId: number) => {
     const chapter = chaptersData.find(ch => ch.id === chapterId);
     if (!chapter?.uploadedFile) return;
 
     // Тут буде логіка завантаження файлу
     alert(`Завантаження файлу: ${chapter.uploadedFile.name}`);
+  };
+
+  const getDeadlineBadge = (chapter: Chapter) => {
+    if (!chapter.chapterDeadline) return null;
+
+    const today = new Date();
+    const deadline = new Date(chapter.chapterDeadline);
+    const isOverdue = deadline < today;
+    const daysRemaining = Math.ceil((deadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (chapter.status === 'completed') {
+      return <Badge className="bg-green-100 text-green-800 border-green-200">Виконано</Badge>;
+    } else if (isOverdue) {
+      return <Badge className="bg-red-100 text-red-800 border-red-200">Прострочено</Badge>;
+    } else if (daysRemaining <= 3) {
+      return <Badge className="bg-orange-100 text-orange-800 border-orange-200">Терміново ({daysRemaining} дн.)</Badge>;
+    } else if (daysRemaining <= 7) {
+      return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Закінчується ({daysRemaining} дн.)</Badge>;
+    } else {
+      return <Badge variant="outline">До {new Date(chapter.chapterDeadline).toLocaleDateString('uk-UA')}</Badge>;
+    }
   };
 
   const totalProgress = chaptersData.length > 0 
@@ -1519,6 +2024,12 @@ const TeacherGrades = () => {
                       <span className="font-medium">Поточна оцінка:</span> 
                       <span className="font-bold text-primary ml-2">{selectedStudent.grade}/100</span>
                     </p>
+                    {selectedStudent.overallDeadline && (
+                      <p className="text-sm text-foreground">
+                        <span className="font-medium">Загальний дедлайн:</span> 
+                        <span className="ml-2">{new Date(selectedStudent.overallDeadline).toLocaleDateString('uk-UA')}</span>
+                      </p>
+                    )}
                     {selectedStudent.hasPendingReview && (
                       <div className="flex items-center gap-2 text-sm text-yellow-600">
                         <Bell className="w-4 h-4" />
@@ -1546,9 +2057,13 @@ const TeacherGrades = () => {
                       </span>
                     )}
                   </Button>
-                  <Button variant="outline" className="border-border text-foreground hover:bg-accent">
+                  <Button 
+                    variant="outline" 
+                    className="border-border text-foreground hover:bg-accent"
+                    onClick={() => showDeadlineModal(selectedStudent)}
+                  >
                     <Calendar className="w-4 h-4 mr-2" />
-                    Заплановані зустрічі
+                    Керування дедлайнами
                   </Button>
                   <Button variant="outline" className="border-border text-foreground hover:bg-accent">
                     <Download className="w-4 h-4 mr-2" />
@@ -1586,6 +2101,7 @@ const TeacherGrades = () => {
                               <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(chapter.status)}`}>
                                 {getStatusText(chapter.status)}
                               </span>
+                              {getDeadlineBadge(chapter)}
                               {(chapter.teacherComments?.length || 0) > 0 && (
                                 <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full border border-blue-200">
                                   {chapter.teacherComments?.length} коментарів
@@ -1784,6 +2300,16 @@ const TeacherGrades = () => {
         onClose={() => setGradeModal({ isOpen: false, chapter: null })}
         chapter={gradeModal.chapter}
         onGradeSubmit={handleGradeUpdate}
+      />
+
+      {/* Модальне вікно керування дедлайнами */}
+      <DeadlineModal
+        isOpen={deadlineModal.isOpen}
+        onClose={() => setDeadlineModal({ isOpen: false, student: null })}
+        student={deadlineModal.student}
+        chapters={chaptersData}
+        onSetOverallDeadline={handleSetOverallDeadline}
+        onSetChapterDeadline={handleSetChapterDeadline}
       />
     </div>
   );

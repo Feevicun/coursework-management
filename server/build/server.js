@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import cors from "cors";
 import pool from './db.js';
+import bcrypt from 'bcrypt';
 import { fileURLToPath } from "url";
 import jwt from 'jsonwebtoken';
 import ChatWebSocketServer from './websocket-server.ts';
@@ -73,17 +74,46 @@ async function initializeProjectStructure(userId, projectType) {
 // ============ API ROUTES ============
 // Middleware для аутентифікації через JWT
 function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token)
-        return res.status(401).json({ message: "No token provided" });
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-        if (err)
-            return res.status(403).json({ message: "Invalid token" });
-        // Here we assert that decoded is JwtUserPayload
-        req.user = decoded;
-        next();
-    });
+    try {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+        if (!token) {
+            console.log("❌ No token provided");
+            return res.status(401).json({ message: "Токен не надано" });
+        }
+        console.log("🔑 Token received, verifying...");
+        jwt.verify(token, JWT_SECRET, (err, decoded) => {
+            if (err) {
+                console.error("❌ Invalid token:", err.message);
+                return res.status(403).json({ message: "Невалідний токен" });
+            }
+            // Типізація decoded об'єкта
+            const decodedObj = decoded;
+            // Детальне логування декодованого токена
+            console.log("🔍 Decoded token payload:", {
+                userId: decodedObj.userId,
+                email: decodedObj.email,
+                role: decodedObj.role,
+                allFields: Object.keys(decodedObj)
+            });
+            // Перевіряємо, чи є userId в токені
+            if (!decodedObj.userId) {
+                console.error("❌ No userId in token payload");
+                console.error("Available fields:", Object.keys(decodedObj));
+                return res.status(403).json({
+                    message: "Невалідний токен: відсутній userId"
+                });
+            }
+            // Створюємо об'єкт користувача
+            req.user = decodedObj;
+            console.log(`✅ Authenticated user: userId=${req.user.userId}, email=${req.user.email}, role=${req.user.role}`);
+            next();
+        });
+    }
+    catch (error) {
+        console.error("❌ Authentication middleware error:", error);
+        return res.status(500).json({ message: "Помилка аутентифікації" });
+    }
 }
 // Отримати всіх користувачів
 app.get("/api/users", async (req, res) => {
@@ -96,26 +126,67 @@ app.get("/api/users", async (req, res) => {
         res.status(500).json({ message: "Database error fetching users" });
     }
 });
-// POST /api/register
-app.post("/api/register", async (req, res) => {
+// Оновлений API для реєстрації
+app.post('/api/register', async (req, res) => {
     try {
-        const { firstName, lastName, email, password, role, facultyId, departmentId } = req.body;
-        const name = `${firstName.trim()} ${lastName.trim()}`;
-        if (!facultyId || !departmentId) {
-            return res.status(400).json({ message: "Faculty and department must be selected" });
+        const { firstName, lastName, email, password, facultyId, departmentId, specialtyId, groupId, role } = req.body;
+        console.log('🔍 Registration attempt:', { firstName, lastName, email, role, facultyId, departmentId, specialtyId, groupId });
+        // Валідація обов'язкових полів
+        if (!firstName || !lastName || !email || !password || !facultyId || !departmentId) {
+            return res.status(400).json({ message: 'Будь ласка, заповніть всі обовʼязкові поля' });
         }
-        const existingUser = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+        if (role === 'student' && (!specialtyId || !groupId)) {
+            return res.status(400).json({ message: 'Для студента обовʼязкові спеціальність та група' });
+        }
+        // Перевірка унікальності email
+        const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
         if (existingUser.rows.length > 0) {
-            return res.status(400).json({ message: "User with this email already exists" });
+            console.log('❌ Email already exists:', email);
+            return res.status(400).json({ message: 'Користувач з таким email вже існує' });
         }
-        const result = await pool.query(`INSERT INTO users (name, email, password, role, faculty_id, department_id, registeredAt) 
-       VALUES ($1, $2, $3, $4, $5, $6, NOW()) 
-       RETURNING id, name, email, role, faculty_id, department_id, registeredAt`, [name, email, password, role, facultyId, departmentId]);
-        res.status(201).json({ message: "User registered successfully", user: result.rows[0] });
+        // Хешування пароля
+        const hashedPassword = await bcrypt.hash(password, 10);
+        // Для викладачів встановлюємо null для спеціальності та групи
+        const finalSpecialtyId = role === 'teacher' ? null : specialtyId;
+        const finalGroupId = role === 'teacher' ? null : groupId;
+        // Додавання користувача
+        const result = await pool.query(`INSERT INTO users (name, email, password, role, faculty_id, department_id, specialty_id, group_id, registeredat, updated_at) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) 
+       RETURNING id, name, email, role, faculty_id, department_id, specialty_id, group_id`, [
+            `${firstName} ${lastName}`,
+            email,
+            hashedPassword,
+            role,
+            facultyId,
+            departmentId,
+            finalSpecialtyId,
+            finalGroupId
+        ]);
+        const user = result.rows[0];
+        // Використовуємо константу JWT_SECRET замість process.env.JWT_SECRET
+        const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
+            expiresIn: '24h' // Додаємо термін дії токена
+        });
+        console.log('✅ User registered successfully:', user.id);
+        res.json({
+            message: 'Користувач успішно зареєстрований',
+            token,
+            user: {
+                id: user.id,
+                firstName: firstName,
+                lastName: lastName,
+                email: user.email,
+                role: user.role,
+                facultyId: user.faculty_id,
+                departmentId: user.department_id,
+                specialtyId: user.specialty_id,
+                groupId: user.group_id
+            }
+        });
     }
-    catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Database error" });
+    catch (error) {
+        console.error('❌ Registration error:', error);
+        res.status(500).json({ message: 'Помилка сервера при реєстрації' });
     }
 });
 // GET /api/faculties
@@ -151,19 +222,45 @@ app.get("/api/faculties/:facultyId/departments", async (req, res) => {
 app.post("/api/login", async (req, res) => {
     try {
         const { email, password, role } = req.body;
-        const result = await pool.query(`SELECT id, name, email, role FROM users 
-       WHERE email = $1 AND password = $2 AND role = $3`, [email.trim(), password.trim(), role]);
+        console.log('🔍 Login attempt:', { email, role });
+        // Спочатку знаходимо користувача з email та role
+        const result = await pool.query(`SELECT id, name, email, password, role, faculty_id, department_id, specialty_id, group_id 
+       FROM users 
+       WHERE email = $1 AND role = $2`, [email.trim(), role]);
         if (result.rows.length === 0) {
+            console.log('❌ User not found or role mismatch');
             return res.status(401).json({ message: "Invalid email, password or role" });
         }
         const user = result.rows[0];
+        // Порівнюємо пароль з хешованим паролем у базі
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            console.log('❌ Invalid password');
+            return res.status(401).json({ message: "Invalid email, password or role" });
+        }
         // Генеруємо JWT токен
         const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
         await pool.query("UPDATE users SET lastLoginAt = NOW() WHERE email = $1", [email.trim()]);
-        res.json({ message: "Login successful", user, token });
+        console.log('✅ Login successful for user:', user.id);
+        // Повертаємо ту саму структуру, що і при реєстрації
+        res.json({
+            message: "Login successful",
+            token,
+            user: {
+                id: user.id,
+                firstName: user.name.split(' ')[0] || '',
+                lastName: user.name.split(' ')[1] || '',
+                email: user.email,
+                role: user.role,
+                facultyId: user.faculty_id,
+                departmentId: user.department_id,
+                specialtyId: user.specialty_id,
+                groupId: user.group_id
+            }
+        });
     }
     catch (err) {
-        console.error(err);
+        console.error('❌ Login error:', err);
         res.status(500).json({ message: "Database error" });
     }
 });
@@ -181,11 +278,20 @@ app.get('/api/current-user', authenticateToken, async (req, res) => {
         u.role, 
         u.faculty_id,
         u.department_id,
+        u.specialty_id,
+        u.group_id,
         f.name as faculty_name,
-        d.name as department_name
+        d.name as department_name,
+        s.name as specialty_name,
+        s.code as specialty_code,
+        g.name as group_name,
+        g.course as course,
+        g.education_level
        FROM users u
        LEFT JOIN faculties f ON u.faculty_id = f.id
        LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN specialties s ON u.specialty_id = s.id
+       LEFT JOIN groups g ON u.group_id = g.id
        WHERE u.id = $1`, [userId]);
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'User not found' });
@@ -203,8 +309,15 @@ app.get('/api/current-user', authenticateToken, async (req, res) => {
                 role: userData.role,
                 faculty_id: userData.faculty_id,
                 department_id: userData.department_id,
+                specialty_id: userData.specialty_id,
+                group_id: userData.group_id,
                 faculty_name: userData.faculty_name,
-                department_name: userData.department_name
+                department_name: userData.department_name,
+                specialty_name: userData.specialty_name,
+                specialty_code: userData.specialty_code,
+                group_name: userData.group_name,
+                course: userData.course,
+                education_level: userData.education_level
             },
         });
     }
@@ -228,30 +341,34 @@ app.post("/api/logout", async (req, res) => {
         res.status(500).json({ message: "Database error" });
     }
 });
-// PUT /api/update-profile
-// app.put("/api/update-profile", async (req: Request, res: Response) => {
-//   try {
-//     const { id, name, email, avatarUrl } = req.body;
-//     if (!id) {
-//       return res.status(400).json({ message: "User id is required" });
-//     }
-//     // Оновлення користувача
-//     const result = await pool.query(
-//       `UPDATE users
-//        SET name = $1, email = $2, avatar_url = $3
-//        WHERE id = $4
-//        RETURNING id, name, email, role, avatar_url`,
-//       [name, email, avatarUrl, id]
-//     );
-//     if (result.rows.length === 0) {
-//       return res.status(404).json({ message: "User not found" });
-//     }
-//     res.json({ message: "Profile updated successfully", user: result.rows[0] });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Database error" });
-//   }
-// });
+// API для отримання спеціальностей факультету
+app.get('/api/faculties/:facultyId/specialties', async (req, res) => {
+    try {
+        const { facultyId } = req.params;
+        console.log(`🔍 Fetching specialties for faculty ID: ${facultyId}`);
+        const result = await pool.query('SELECT id, code, name FROM specialties WHERE faculty_id = $1 ORDER BY code', [facultyId]);
+        console.log(`✅ Found ${result.rows.length} specialties for faculty ${facultyId}`);
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('❌ Error fetching specialties:', error);
+        res.status(500).json({ message: 'Помилка сервера при отриманні спеціальностей' });
+    }
+});
+// API для отримання груп спеціальності
+app.get('/api/specialties/:specialtyId/groups', async (req, res) => {
+    try {
+        const { specialtyId } = req.params;
+        console.log(`🔍 Fetching groups for specialty ID: ${specialtyId}`);
+        const result = await pool.query('SELECT id, name, course, education_level FROM groups WHERE specialty_id = $1 ORDER BY course, name', [specialtyId]);
+        console.log(`✅ Found ${result.rows.length} groups for specialty ${specialtyId}`);
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('❌ Error fetching groups:', error);
+        res.status(500).json({ message: 'Помилка сервера при отриманні груп' });
+    }
+});
 // API для перевірки користувача при забутому паролі
 app.post("/api/forgot-password/verify", async (req, res) => {
     try {
@@ -280,6 +397,7 @@ app.post("/api/forgot-password/verify", async (req, res) => {
     }
 });
 // API для зміни паролю
+// API для зміни пароля - ВИПРАВЛЕНИЙ ВАРІАНТ
 app.post("/api/forgot-password/reset", async (req, res) => {
     try {
         const { email, role, newPassword } = req.body;
@@ -295,8 +413,10 @@ app.post("/api/forgot-password/reset", async (req, res) => {
             return res.status(404).json({ message: "User not found" });
         }
         const userId = userResult.rows[0].id;
-        // Оновлюємо пароль в БД
-        await pool.query("UPDATE users SET password = $1 WHERE id = $2", [newPassword, userId]);
+        // ХЕШУЄМО НОВИЙ ПАРОЛЬ перед збереженням
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Оновлюємо пароль в БД з ХЕШОВАНИМ паролем
+        await pool.query("UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2", [hashedPassword, userId]);
         res.json({ message: "Password updated successfully" });
     }
     catch (err) {
@@ -428,7 +548,6 @@ app.post("/api/user-project", authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Database error' });
     }
 });
-// GET /api/user-chapters - отримати глави користувача для активного проекту
 app.get("/api/user-chapters", authenticateToken, async (req, res) => {
     try {
         const userId = req.user?.userId;
@@ -439,6 +558,7 @@ app.get("/api/user-chapters", authenticateToken, async (req, res) => {
         if (!projectType) {
             return res.status(400).json({ message: "Project type is required" });
         }
+        // ✅ ОНОВЛЕНО: Додаємо отримання інформації про проект
         const result = await pool.query(`SELECT 
         ROW_NUMBER() OVER (ORDER BY 
           CASE chapter_key 
@@ -464,7 +584,12 @@ app.get("/api/user-chapters", authenticateToken, async (req, res) => {
         student_note,
         uploaded_file_name,
         uploaded_file_date,
-        uploaded_file_size
+        uploaded_file_size,
+        work_type,   -- ✅ НОВЕ ПОЛЕ
+        project_title, -- ✅ НОВЕ ПОЛЕ
+        supervisor,    -- ✅ НОВЕ ПОЛЕ
+        project_start_date, -- ✅ НОВЕ ПОЛЕ
+        project_deadline    -- ✅ НОВЕ ПОЛЕ
        FROM user_chapters 
        WHERE user_id = $1 AND project_type = $2
        ORDER BY 
@@ -496,7 +621,15 @@ app.get("/api/user-chapters", authenticateToken, async (req, res) => {
                 uploadDate: row.uploaded_file_date ? new Date(row.uploaded_file_date).toLocaleDateString('uk-UA') : '',
                 size: row.uploaded_file_size || ''
             } : undefined,
-            teacherComments: []
+            teacherComments: [],
+            // ✅ Додаємо інформацію про проект
+            projectInfo: {
+                workType: row.work_type || projectType, // ✅ workType
+                title: row.project_title || '',
+                supervisor: row.supervisor || '',
+                startDate: row.project_start_date,
+                deadline: row.project_deadline
+            }
         }));
         res.json(chapters);
     }
@@ -563,6 +696,512 @@ app.delete("/api/user-chapters/:chapterKey/file", authenticateToken, async (req,
     }
     catch (err) {
         console.error(err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/notify-teacher - сповістити викладача про нову роботу
+app.post("/api/notify-teacher", authenticateToken, async (req, res) => {
+    try {
+        const { chapterId, chapterKey, projectType, studentName } = req.body;
+        if (!chapterId || !studentName) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+        // Отримуємо ID студента та його викладача
+        const studentResult = await pool.query(`SELECT uc.user_id as student_id, ts.teacher_id
+       FROM user_chapters uc
+       JOIN teacher_students ts ON uc.user_id = ts.student_id
+       WHERE uc.id = $1`, [chapterId]);
+        if (studentResult.rows.length === 0) {
+            return res.status(404).json({ message: "Student or teacher not found" });
+        }
+        const { student_id, teacher_id } = studentResult.rows[0];
+        // Створюємо сповіщення для викладача
+        await pool.query(`INSERT INTO notifications (user_id, type, title, message, related_entity, related_entity_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`, [
+            teacher_id,
+            'submission',
+            'Нова робота на перевірку',
+            `Студент ${studentName} надіслав роботу "${chapterKey}" для перевірки`,
+            'chapter',
+            chapterId
+        ]);
+        // Оновлюємо поле submitted_for_review_at
+        await pool.query(`UPDATE user_chapters 
+       SET submitted_for_review_at = NOW(), status = 'review'
+       WHERE id = $1`, [chapterId]);
+        res.json({
+            message: "Teacher notified successfully",
+            notification: {
+                teacherId: teacher_id,
+                studentId: student_id,
+                chapterId,
+                chapterKey,
+                projectType
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error notifying teacher:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/notify-student - сповістити студента про оцінку
+app.post("/api/notify-student", authenticateToken, async (req, res) => {
+    try {
+        const { studentId, chapterId, grade, teacherName } = req.body;
+        if (!studentId || !chapterId || grade === undefined) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+        // Отримуємо дані студента
+        const studentResult = await pool.query(`SELECT u.id, u.name, u.email, uc.chapter_key, up.active_project_type
+       FROM users u
+       JOIN user_chapters uc ON uc.user_id = u.id
+       JOIN user_projects up ON up.user_id = u.id
+       WHERE u.id = $1 AND uc.id = $2`, [studentId, chapterId]);
+        if (studentResult.rows.length === 0) {
+            return res.status(404).json({ message: "Student or chapter not found" });
+        }
+        const student = studentResult.rows[0];
+        // Створюємо сповіщення
+        await pool.query(`INSERT INTO notifications (user_id, type, title, message, related_entity, related_entity_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`, [
+            studentId,
+            'grade',
+            'Нова оцінка',
+            `Викладач ${teacherName} виставив оцінку ${grade} балів за розділ "${student.chapter_key}"`,
+            'chapter',
+            chapterId
+        ]);
+        // Оновлюємо статус глави
+        await pool.query(`UPDATE user_chapters 
+       SET status = 'completed', graded_at = NOW(), graded_by = $1
+       WHERE id = $2 AND user_id = $3`, [teacherName, chapterId, studentId]);
+        res.json({
+            message: "Student notified successfully",
+            notification: {
+                studentId,
+                chapterId,
+                grade,
+                projectType: student.active_project_type
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error notifying student:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/project-topic - отримати тему проекту
+app.get("/api/project-topic", authenticateToken, async (req, res) => {
+    try {
+        const { projectType } = req.query;
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        const result = await pool.query(`SELECT * FROM student_topics 
+       WHERE student_id = $1 AND project_type = $2 
+       ORDER BY created_at DESC LIMIT 1`, [userId, projectType]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Topic not found" });
+        }
+        const topic = result.rows[0];
+        res.json({
+            topic: {
+                id: topic.id,
+                title: topic.topic,
+                description: topic.description,
+                goals: topic.goals,
+                requirements: topic.requirements,
+                teacherId: topic.teacher_id,
+                teacherName: topic.teacher_name,
+                status: topic.status,
+                createdAt: topic.created_at,
+                approvedAt: topic.approved_at
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error fetching project topic:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/project-topic - зберегти тему проекту
+app.post("/api/project-topic", authenticateToken, async (req, res) => {
+    try {
+        const { projectType, topic } = req.body;
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        if (!topic || !topic.title) {
+            return res.status(400).json({ message: "Topic title is required" });
+        }
+        // Зберігаємо тему
+        const result = await pool.query(`INSERT INTO student_topics 
+       (student_id, project_type, topic, description, goals, requirements, teacher_id, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       RETURNING id`, [
+            userId,
+            projectType,
+            topic.title,
+            topic.description,
+            topic.goals,
+            topic.requirements,
+            topic.teacherId,
+            topic.status || 'pending'
+        ]);
+        // Оновлюємо перший розділ
+        await pool.query(`UPDATE user_chapters 
+       SET title = $1, status = 'inProgress', progress = 10, updated_at = NOW()
+       WHERE user_id = $2 AND chapter_key = 'intro' AND project_type = $3`, [topic.title, userId, projectType]);
+        res.json({
+            message: "Topic saved successfully",
+            topicId: result.rows[0].id
+        });
+    }
+    catch (err) {
+        console.error('Error saving project topic:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// PUT /api/thesis-tracker/chapter/:chapterId/grade - оцінити розділ
+app.put("/api/thesis-tracker/chapter/:chapterId/grade", authenticateToken, async (req, res) => {
+    try {
+        const { chapterId } = req.params;
+        const { grade, feedback, status, gradedBy, gradedAt } = req.body;
+        const teacherId = req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        if (!chapterId || grade === undefined) {
+            return res.status(400).json({ message: "Chapter ID and grade are required" });
+        }
+        // Отримуємо інформацію про главу
+        const chapterResult = await pool.query(`SELECT uc.*, u.id as student_id, u.name as student_name
+       FROM user_chapters uc
+       JOIN users u ON uc.user_id = u.id
+       WHERE uc.id = $1`, [chapterId]);
+        if (chapterResult.rows.length === 0) {
+            return res.status(404).json({ message: "Chapter not found" });
+        }
+        const chapter = chapterResult.rows[0];
+        // Оновлюємо оцінку
+        await pool.query(`UPDATE user_chapters 
+       SET grade = $1, status = $2, graded_by = $3, graded_at = $4, updated_at = NOW()
+       WHERE id = $5`, [grade, status || 'completed', gradedBy || 'Викладач', gradedAt || new Date(), chapterId]);
+        // Додаємо коментар з оцінкою, якщо є feedback
+        if (feedback) {
+            await pool.query(`INSERT INTO teacher_comments (chapter_id, teacher_id, text, status, type, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())`, [chapterId, teacherId, feedback, grade >= 60 ? 'success' : 'error', 'feedback']);
+        }
+        // Розраховуємо середню оцінку студента
+        const avgGradeResult = await pool.query(`SELECT AVG(grade) as average_grade 
+       FROM user_chapters 
+       WHERE user_id = $1 AND grade IS NOT NULL`, [chapter.student_id]);
+        const averageGrade = Math.round(avgGradeResult.rows[0].average_grade || 0);
+        res.json({
+            message: "Grade submitted successfully",
+            grade: {
+                chapterId,
+                grade,
+                averageGrade,
+                studentId: chapter.student_id
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error submitting grade:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/thesis-tracker/chapter/:chapterId/comments - отримати коментарі розділу
+app.get("/api/thesis-tracker/chapter/:chapterId/comments", authenticateToken, async (req, res) => {
+    try {
+        const { chapterId } = req.params;
+        const result = await pool.query(`SELECT 
+        tc.id,
+        tc.text,
+        tc.status,
+        tc.type,
+        tc.created_at as date,
+        u.name as author
+       FROM teacher_comments tc
+       JOIN users u ON tc.teacher_id = u.id
+       WHERE tc.chapter_id = $1
+       ORDER BY tc.created_at DESC`, [chapterId]);
+        const comments = result.rows.map(row => ({
+            id: row.id.toString(),
+            text: row.text,
+            author: row.author,
+            date: new Date(row.date).toLocaleDateString('uk-UA'),
+            type: row.type,
+            status: row.status
+        }));
+        res.json(comments);
+    }
+    catch (err) {
+        console.error('Error fetching comments:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/thesis-tracker/chapter/:chapterId/comments - додати коментар
+app.post("/api/thesis-tracker/chapter/:chapterId/comments", authenticateToken, async (req, res) => {
+    try {
+        const { chapterId } = req.params;
+        const { text, status, type } = req.body;
+        const teacherId = req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        if (!text || !status) {
+            return res.status(400).json({ message: "Text and status are required" });
+        }
+        // Перевіряємо, чи існує глава
+        const chapterResult = await pool.query(`SELECT id FROM user_chapters WHERE id = $1`, [chapterId]);
+        if (chapterResult.rows.length === 0) {
+            return res.status(404).json({ message: "Chapter not found" });
+        }
+        // Додаємо коментар
+        const result = await pool.query(`INSERT INTO teacher_comments (chapter_id, teacher_id, text, status, type, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       RETURNING id`, [chapterId, teacherId, text, status, type || 'feedback']);
+        // Оновлюємо статус глави, якщо коментар вимагає виправлень
+        if (status === 'error') {
+            await pool.query(`UPDATE user_chapters SET status = 'review', updated_at = NOW() WHERE id = $1`, [chapterId]);
+        }
+        res.status(201).json({
+            message: "Comment added successfully",
+            comment: {
+                id: result.rows[0].id.toString(),
+                text,
+                author: 'Викладач',
+                date: new Date().toLocaleDateString('uk-UA'),
+                type: type || 'feedback',
+                status
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error adding comment:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/thesis-tracker/student/:studentId/chapters - отримати глави студента
+app.get("/api/thesis-tracker/student/:studentId/chapters", authenticateToken, async (req, res) => {
+    try {
+        const { studentId } = req.params;
+        const teacherId = req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Перевіряємо, чи має викладач доступ до цього студента
+        const accessResult = await pool.query(`SELECT id FROM teacher_students WHERE teacher_id = $1 AND student_id = $2`, [teacherId, studentId]);
+        if (accessResult.rows.length === 0) {
+            return res.status(403).json({ message: "Access denied to this student" });
+        }
+        const result = await pool.query(`SELECT 
+        uc.id,
+        uc.chapter_key,
+        uc.progress,
+        uc.status,
+        uc.grade,
+        uc.student_note,
+        uc.uploaded_file_name,
+        uc.uploaded_file_date,
+        uc.uploaded_file_size,
+        uc.graded_by,
+        uc.graded_at,
+        uc.submitted_for_review_at,
+        up.active_project_type as project_type
+       FROM user_chapters uc
+       JOIN user_projects up ON uc.user_id = up.user_id
+       WHERE uc.user_id = $1
+       ORDER BY 
+         CASE uc.chapter_key 
+           WHEN 'intro' THEN 1
+           WHEN 'theory' THEN 2  
+           WHEN 'design' THEN 3
+           WHEN 'implementation' THEN 4
+           WHEN 'tasks' THEN 2
+           WHEN 'diary' THEN 3
+           WHEN 'conclusion' THEN 5
+           WHEN 'report' THEN 6
+           WHEN 'appendix' THEN 7
+           WHEN 'sources' THEN 8
+           WHEN 'abstract' THEN 9
+           WHEN 'cover' THEN 10
+           WHEN 'content' THEN 11
+           ELSE 99 
+         END`, [studentId]);
+        // Отримуємо коментарі для кожної глави
+        const chaptersWithComments = await Promise.all(result.rows.map(async (row) => {
+            const commentsResult = await pool.query(`SELECT 
+            tc.id,
+            tc.text,
+            tc.status,
+            tc.type,
+            tc.created_at as date,
+            u.name as author
+           FROM teacher_comments tc
+           JOIN users u ON tc.teacher_id = u.id
+           WHERE tc.chapter_id = $1
+           ORDER BY tc.created_at DESC`, [row.id]);
+            const comments = commentsResult.rows.map(comment => ({
+                id: comment.id.toString(),
+                text: comment.text,
+                author: comment.author,
+                date: new Date(comment.date).toLocaleDateString('uk-UA'),
+                type: comment.type,
+                status: comment.status
+            }));
+            return {
+                id: row.id,
+                key: row.chapter_key,
+                title: getChapterTitle(row.chapter_key),
+                description: getChapterDescription(row.chapter_key),
+                progress: row.progress,
+                status: row.status,
+                studentGrade: row.grade,
+                studentNote: row.student_note || '',
+                uploadedFile: row.uploaded_file_name ? {
+                    name: row.uploaded_file_name,
+                    uploadDate: row.uploaded_file_date ? new Date(row.uploaded_file_date).toLocaleDateString('uk-UA') : '',
+                    size: row.uploaded_file_size || '',
+                    currentVersion: 1
+                } : undefined,
+                teacherComments: comments,
+                projectType: row.project_type,
+                gradedBy: row.graded_by,
+                gradedAt: row.graded_at,
+                submittedForReviewAt: row.submitted_for_review_at
+            };
+        }));
+        res.json({ chapters: chaptersWithComments });
+    }
+    catch (err) {
+        console.error('Error fetching student chapters:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// Допоміжні функції для назв розділів
+function getChapterTitle(key) {
+    const titles = {
+        'intro': 'Вступ',
+        'theory': 'Теоретична частина',
+        'design': 'Проектування',
+        'implementation': 'Реалізація',
+        'tasks': 'Завдання',
+        'diary': 'Щоденник практики',
+        'conclusion': 'Висновки',
+        'report': 'Звіт',
+        'appendix': 'Додатки',
+        'sources': 'Джерела',
+        'abstract': 'Анотація',
+        'cover': 'Титульна сторінка',
+        'content': 'Зміст'
+    };
+    return titles[key] || key;
+}
+function getChapterDescription(key) {
+    const descriptions = {
+        'intro': 'Вступна частина роботи',
+        'theory': 'Огляд наукових джерел та літератури',
+        'design': 'Методи дослідження та проектування',
+        'implementation': 'Реалізація та результати дослідження',
+        'tasks': 'Постановка завдань практики',
+        'diary': 'Щоденні записи проходження практики',
+        'conclusion': 'Висновки та рекомендації',
+        'report': 'Звіт про виконану роботу',
+        'appendix': 'Додаткові матеріали',
+        'sources': 'Список використаних джерел',
+        'abstract': 'Анотація роботи',
+        'cover': 'Титульна сторінка роботи',
+        'content': 'Зміст роботи'
+    };
+    return descriptions[key] || 'Опис розділу';
+}
+// GET /api/teacher/new-submissions - отримати нові роботи на перевірку
+app.get("/api/teacher/new-submissions", authenticateToken, async (req, res) => {
+    try {
+        const { teacher_id } = req.query;
+        const teacherId = teacher_id || req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Отримуємо студентів викладача з роботами на перевірці
+        const result = await pool.query(`SELECT 
+        uc.id as chapter_id,
+        uc.chapter_key,
+        uc.submitted_for_review_at,
+        uc.uploaded_file_name,
+        u.id as student_id,
+        u.name as student_name,
+        u.email as student_email,
+        up.active_project_type
+       FROM user_chapters uc
+       JOIN users u ON uc.user_id = u.id
+       JOIN user_projects up ON u.id = up.user_id
+       JOIN teacher_students ts ON u.id = ts.student_id
+       WHERE ts.teacher_id = $1 
+         AND uc.status = 'review'
+         AND uc.submitted_for_review_at >= NOW() - INTERVAL '7 days'
+       ORDER BY uc.submitted_for_review_at DESC`, [teacherId]);
+        const newSubmissions = result.rows.map(row => ({
+            chapterId: row.chapter_id,
+            chapterKey: row.chapter_key,
+            studentId: row.student_id,
+            studentName: row.student_name,
+            studentEmail: row.student_email,
+            projectType: row.active_project_type,
+            submittedAt: row.submitted_for_review_at,
+            fileName: row.uploaded_file_name
+        }));
+        res.json(newSubmissions);
+    }
+    catch (err) {
+        console.error('Error fetching new submissions:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/teacher/pending-reviews - отримати роботи на перевірці
+app.get("/api/teacher/pending-reviews", authenticateToken, async (req, res) => {
+    try {
+        const { teacher_id } = req.query;
+        const teacherId = teacher_id || req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        const result = await pool.query(`SELECT 
+        uc.id as chapter_id,
+        uc.chapter_key,
+        uc.submitted_for_review_at,
+        u.id as student_id,
+        u.name as student_name,
+        up.active_project_type,
+        COUNT(tc.id) as comment_count
+       FROM user_chapters uc
+       JOIN users u ON uc.user_id = u.id
+       JOIN user_projects up ON u.id = up.user_id
+       JOIN teacher_students ts ON u.id = ts.student_id
+       LEFT JOIN teacher_comments tc ON uc.id = tc.chapter_id
+       WHERE ts.teacher_id = $1 
+         AND uc.status = 'review'
+       GROUP BY uc.id, uc.chapter_key, uc.submitted_for_review_at, u.id, u.name, up.active_project_type
+       ORDER BY uc.submitted_for_review_at ASC`, [teacherId]);
+        const pendingReviews = result.rows.map(row => ({
+            chapterId: row.chapter_id,
+            chapterKey: row.chapter_key,
+            studentId: row.student_id,
+            studentName: row.student_name,
+            projectType: row.active_project_type,
+            submittedAt: row.submitted_for_review_at,
+            commentCount: parseInt(row.comment_count)
+        }));
+        res.json(pendingReviews);
+    }
+    catch (err) {
+        console.error('Error fetching pending reviews:', err);
         res.status(500).json({ message: 'Database error' });
     }
 });
@@ -968,16 +1607,25 @@ function generateFutureTopic(analysis) {
         relevance: 80 + Math.floor(Math.random() * 15)
     };
 }
-// POST /api/teachers/match - пошук викладачів з фільтрацією за факультетом
+// POST /api/teachers/match - пошук викладачів з фільтрацією за факультетом та доступними місцями
 app.post("/api/teachers/match", authenticateToken, async (req, res) => {
     try {
-        const { topic, idea, facultyId } = req.body;
+        const { topic, idea, facultyId, workType = 'coursework', includeAvailablePlaces = false, studentInfo = {}, filters = {}, includePlaceDetails = false } = req.body;
         console.log("=== TEACHER MATCH REQUEST ===");
         console.log("Teacher match request details:", {
             topic: topic?.substring(0, 100),
             idea: idea?.substring(0, 100),
-            facultyId: facultyId,
-            facultyIdType: typeof facultyId,
+            facultyId,
+            workType,
+            includeAvailablePlaces,
+            includePlaceDetails,
+            studentInfo: {
+                specialty_id: studentInfo?.specialty_id,
+                specialty_code: studentInfo?.specialty_code,
+                course: studentInfo?.course,
+                faculty_id: studentInfo?.faculty_id
+            },
+            filters,
             user: req.user?.id
         });
         if (!topic && !idea) {
@@ -991,7 +1639,7 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
         }
         const decodedQuery = decodeURIComponent(searchQuery);
         console.log("Search query for teacher matching:", decodedQuery);
-        // Спочатку перевіримо, чи існує факультет, якщо вказано
+        // Перевіримо, чи існує факультет, якщо вказано
         let facultyInfo = null;
         if (facultyId !== null && facultyId !== undefined && facultyId !== '') {
             const facultyIdNum = parseInt(facultyId);
@@ -1012,68 +1660,19 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                 facultyInfo = { id: null, name: 'Некоректний ID', exists: false };
             }
         }
-        // ДЕТАЛЬНА ПЕРЕВІРКА: Чому запит повертає 0 викладачів?
-        console.log("🔍 DEBUG: Checking why query returns 0 teachers...");
-        // Перевіримо всіх викладачів у системі
-        const allTeachers = await pool.query(`
-      SELECT COUNT(*) as count FROM teachers
-    `);
-        console.log(`📊 Total teachers in teachers table: ${allTeachers.rows[0].count}`);
-        // Перевіримо викладачів з користувачами
-        const teachersWithUsers = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM teachers t 
-      JOIN users u ON t.id = u.id 
-      WHERE u.role = 'teacher'
-    `);
-        console.log(`👥 Teachers with user accounts: ${teachersWithUsers.rows[0].count}`);
-        // Перевіримо зв'язок між teachers та users
-        const connectionCheck = await pool.query(`
-      SELECT 
-        t.id as teacher_id,
-        t.full_name as teacher_name,
-        u.id as user_id, 
-        u.name as user_name,
-        u.email,
-        u.role
-      FROM teachers t
-      LEFT JOIN users u ON t.id = u.id
-      WHERE u.role = 'teacher'
-      LIMIT 10
-    `);
-        console.log('🔗 Teacher-User connection check:');
-        connectionCheck.rows.forEach(row => {
-            console.log(`  Teacher: ${row.teacher_name} (${row.teacher_id}) -> User: ${row.user_name} (${row.user_id}) - Email: ${row.email} - Role: ${row.role}`);
-        });
-        // Перевіримо викладачів на факультеті №5 без фільтра по ролі
-        const teachersInFaculty5 = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM teachers t 
-      JOIN departments d ON t.department_id = d.id 
-      WHERE d.faculty_id = $1
-    `, [5]);
-        console.log(`🏛️ Teachers in faculty 5 (any role): ${teachersInFaculty5.rows[0].count}`);
-        // Перевіримо викладачів на факультеті №5 з фільтром по ролі
-        const teachersInFaculty5WithRole = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM teachers t 
-      JOIN departments d ON t.department_id = d.id 
-      JOIN users u ON t.id = u.id 
-      WHERE d.faculty_id = $1 AND u.role = 'teacher'
-    `, [5]);
-        console.log(`🎯 Teachers in faculty 5 with teacher role: ${teachersInFaculty5WithRole.rows[0].count}`);
+        console.log("🔍 DEBUG: Starting teacher search...");
         // ПОКРАЩЕНИЙ запит для отримання викладачів
         let teachersQuery = `
       SELECT 
         t.id,
-        COALESCE(t.full_name, u.name) as name,  -- Використовуємо ім'я з users як fallback
+        COALESCE(t.full_name, u.name) as name,
         t.skills,
         d.name as department_name,
         d.id as department_id,
         f.name as faculty_name,
         f.id as faculty_id,
-        u.email,  -- Email беремо з таблиці users
-        u.name as user_name,  -- Для дебагу
+        u.email,
+        u.name as user_name,
         tp.title,
         tp.bio,
         tp.avatar_url,
@@ -1081,7 +1680,7 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
         tp.phone,
         tp.website
       FROM teachers t
-      INNER JOIN users u ON t.id = u.id  -- INNER JOIN гарантує зв'язок
+      INNER JOIN users u ON t.id = u.id
       LEFT JOIN departments d ON t.department_id = d.id
       LEFT JOIN faculties f ON d.faculty_id = f.id
       LEFT JOIN teacher_profiles tp ON t.id = tp.user_id
@@ -1089,124 +1688,19 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
     `;
         const queryParams = [];
         let paramCount = 0;
-        // Додаємо фільтрацію за факультетом, якщо вказано і він існує
+        // Додаємо фільтрацію за факультетом
         if (facultyInfo && facultyInfo.exists) {
             paramCount++;
             teachersQuery += ` AND f.id = $${paramCount}`;
             queryParams.push(facultyInfo.id);
             console.log(`🔍 Filtering by faculty ID: ${facultyInfo.id} (${facultyInfo.name})`);
         }
-        else if (facultyId) {
-            console.log(`🚨 Faculty filter requested but faculty doesn't exist, searching across all faculties`);
-        }
-        else {
-            console.log('🌍 No faculty filter, searching across all faculties');
-        }
         teachersQuery += ` ORDER BY t.full_name`;
-        console.log("Final SQL query:", teachersQuery);
+        console.log("Final SQL query for teachers:", teachersQuery);
         console.log("Query parameters:", queryParams);
         const teachersResult = await pool.query(teachersQuery, queryParams);
         console.log(`📊 Found ${teachersResult.rows.length} teachers for faculty: ${facultyInfo?.name || 'all faculties'}`);
-        // Детальне логування знайдених викладачів
-        if (teachersResult.rows.length > 0) {
-            console.log('👨‍🏫 First 5 teachers found:');
-            teachersResult.rows.slice(0, 5).forEach((teacher, index) => {
-                console.log(`  ${index + 1}. ${teacher.name} - Email: ${teacher.email} - ${teacher.department_name} - ${teacher.faculty_name}`);
-                console.log(`     User name from users table: ${teacher.user_name}`);
-            });
-        }
-        else {
-            console.log('❌ No teachers found with current filters');
-            // Додаткова інформація: скільки всього викладачів у системі
-            const totalTeachers = await pool.query('SELECT COUNT(*) as count FROM teachers t JOIN users u ON t.id = u.id WHERE u.role = $1', ['teacher']);
-            console.log(`📈 Total teachers in system: ${totalTeachers.rows[0].count}`);
-            // Перевіримо, чи є взагалі викладачі у вказаному факультеті
-            if (facultyInfo && facultyInfo.exists) {
-                const facultyTeachersCount = await pool.query(`
-          SELECT COUNT(*) as count 
-          FROM teachers t 
-          JOIN departments d ON t.department_id = d.id 
-          JOIN faculties f ON d.faculty_id = f.id 
-          JOIN users u ON t.id = u.id
-          WHERE f.id = $1 AND u.role = 'teacher'
-        `, [facultyInfo.id]);
-                console.log(`📊 Total teachers in faculty ${facultyInfo.name}: ${facultyTeachersCount.rows[0].count}`);
-            }
-            // АЛЬТЕРНАТИВНИЙ ЗАПИТ: Спробуємо без фільтра по ролі
-            console.log("🔄 Trying alternative query without role filter...");
-            let alternativeQuery = `
-        SELECT 
-          t.id,
-          COALESCE(t.full_name, u.name) as name,
-          t.skills,
-          d.name as department_name,
-          d.id as department_id,
-          f.name as faculty_name,
-          f.id as faculty_id,
-          u.email,  -- Додаємо email
-          u.name as user_name,
-          '' as title,
-          '' as bio,
-          null as avatar_url,
-          '' as office_hours,
-          '' as phone,
-          '' as website
-        FROM teachers t
-        JOIN users u ON t.id = u.id  -- Додаємо JOIN з users
-        JOIN departments d ON t.department_id = d.id
-        JOIN faculties f ON d.faculty_id = f.id
-        WHERE 1=1
-      `;
-            const altParams = [];
-            let altParamCount = 0;
-            if (facultyInfo && facultyInfo.exists) {
-                altParamCount++;
-                alternativeQuery += ` AND f.id = $${altParamCount}`;
-                altParams.push(facultyInfo.id);
-            }
-            alternativeQuery += ` ORDER BY t.full_name LIMIT 10`;
-            const altResult = await pool.query(alternativeQuery, altParams);
-            console.log(`🔍 Alternative query found ${altResult.rows.length} teachers`);
-            if (altResult.rows.length > 0) {
-                console.log('👨‍🏫 Teachers from alternative query:');
-                altResult.rows.forEach((teacher, index) => {
-                    console.log(`  ${index + 1}. ${teacher.name} - Email: ${teacher.email} - ${teacher.department_name} - ${teacher.faculty_name}`);
-                });
-            }
-        }
-        // Якщо основним запитом не знайдено викладачів, використовуємо альтернативний
-        let finalTeachersResult = teachersResult;
         if (teachersResult.rows.length === 0) {
-            console.log("🔄 Using alternative query results...");
-            const alternativeQuery = `
-        SELECT 
-          t.id,
-          COALESCE(t.full_name, u.name) as name,
-          t.skills,
-          d.name as department_name,
-          d.id as department_id,
-          f.name as faculty_name,
-          f.id as faculty_id,
-          u.email,  -- Додаємо email
-          u.name as user_name,
-          '' as title,
-          '' as bio,
-          null as avatar_url,
-          '' as office_hours,
-          '' as phone,
-          '' as website
-        FROM teachers t
-        JOIN users u ON t.id = u.id  -- Додаємо JOIN з users
-        JOIN departments d ON t.department_id = d.id
-        JOIN faculties f ON d.faculty_id = f.id
-        WHERE f.id = $1
-        ORDER BY t.full_name
-        LIMIT 50
-      `;
-            finalTeachersResult = await pool.query(alternativeQuery, [facultyInfo?.id || facultyId]);
-            console.log(`✅ Alternative query returned ${finalTeachersResult.rows.length} teachers`);
-        }
-        if (finalTeachersResult.rows.length === 0) {
             return res.json({
                 teachers: [],
                 searchQuery: decodedQuery,
@@ -1218,19 +1712,15 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                     facultyName: facultyInfo?.name || "Не знайдено",
                     facultyExists: facultyInfo?.exists || false
                 },
-                message: facultyInfo && !facultyInfo.exists ?
-                    `Факультет з ID ${facultyId} не існує в системі` :
-                    facultyId ?
-                        `Не знайдено викладачів для факультету: ${facultyInfo?.name || facultyId}` :
-                        "Не знайдено викладачів у системі."
+                message: "Не знайдено викладачів за даними критеріями"
             });
         }
-        console.log(`🔎 Starting relevance calculation for ${finalTeachersResult.rows.length} teachers...`);
-        // Для кожного викладача шукаємо відповідність у всіх джерелах даних
-        const teachersWithMatches = await Promise.all(finalTeachersResult.rows.map(async (teacher) => {
+        console.log(`🔎 Starting relevance calculation for ${teachersResult.rows.length} teachers...`);
+        // Для кожного викладача шукаємо відповідність
+        const teachersWithMatches = await Promise.all(teachersResult.rows.map(async (teacher) => {
             const teacherId = teacher.id;
             let skills = [];
-            // Парсимо skills з JSON або масиву
+            // Парсимо skills
             try {
                 if (typeof teacher.skills === 'string') {
                     skills = JSON.parse(teacher.skills);
@@ -1238,20 +1728,116 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                 else if (Array.isArray(teacher.skills)) {
                     skills = teacher.skills;
                 }
-                else if (teacher.skills) {
-                    console.warn(`Unexpected skills format for teacher ${teacher.name}:`, typeof teacher.skills);
-                }
             }
             catch (err) {
                 console.error('Error parsing skills for teacher', teacher.name, ':', err);
                 skills = [];
             }
             console.log(`\n📋 Processing teacher: ${teacher.name}`);
-            console.log(`   Email: ${teacher.email}`);
-            console.log(`   User name from users: ${teacher.user_name}`);
-            console.log(`   Skills:`, skills.slice(0, 5)); // Логуємо тільки перші 5 навичок
-            console.log(`   Department: ${teacher.department_name}`);
-            console.log(`   Faculty: ${teacher.faculty_name} (ID: ${teacher.faculty_id})`);
+            // ========== ПОШУК ДОСТУПНИХ МІСЦЬ ==========
+            let availablePlacesData = null;
+            if (includeAvailablePlaces) {
+                try {
+                    console.log(`🔍 Fetching available places for teacher ${teacher.name} (ID: ${teacherId})`);
+                    let placesQuery = `
+              SELECT 
+                ap.id,
+                ap.type,
+                ap.available_spots,
+                ap.course,
+                ap.specialty_id,
+                COALESCE(s.name, 'Невідома спеціальність') as specialty_name,
+                COALESCE(s.code, 'N/A') as specialty_code,
+                s.faculty_id,
+                COALESCE(f.name, 'Невідомий факультет') as faculty_name,
+                COALESCE(ap.max_students, 5) as max_students,
+                COALESCE(ap.current_students, 0) as current_students,
+                COALESCE(ap.requirements, '') as requirements,
+                COALESCE(ap.description, '') as description
+              FROM available_places ap
+              LEFT JOIN specialties s ON ap.specialty_id = s.id
+              LEFT JOIN faculties f ON s.faculty_id = f.id
+              WHERE ap.teacher_id = $1
+            `;
+                    const placesParams = [teacherId];
+                    let paramIndex = 2;
+                    // Фільтруємо за типом роботи
+                    if (workType && workType !== 'all') {
+                        placesQuery += ` AND ap.type = $${paramIndex}`;
+                        placesParams.push(workType);
+                        paramIndex++;
+                    }
+                    // Фільтруємо за спеціальністю студента для точного пошуку
+                    if (studentInfo?.specialty_id && filters?.exactMatchOnly) {
+                        placesQuery += ` AND ap.specialty_id = $${paramIndex}`;
+                        placesParams.push(studentInfo.specialty_id);
+                        paramIndex++;
+                    }
+                    // Фільтруємо за курсом студента для точного пошуку
+                    if (studentInfo?.course && filters?.exactMatchOnly) {
+                        placesQuery += ` AND ap.course = $${paramIndex}`;
+                        placesParams.push(studentInfo.course);
+                        paramIndex++;
+                    }
+                    // Фільтр для показу всіх місць або тільки доступних
+                    if (filters?.includeAllPlaces === false) {
+                        placesQuery += ` AND ap.available_spots > 0`;
+                    }
+                    placesQuery += ` ORDER BY ap.type, ap.course, ap.specialty_id`;
+                    console.log(`📋 Available places query:`, placesQuery);
+                    console.log(`📋 Parameters:`, placesParams);
+                    const placesResult = await pool.query(placesQuery, placesParams);
+                    console.log(`✅ Found ${placesResult.rows.length} available places for ${teacher.name}`);
+                    if (placesResult.rows.length > 0) {
+                        // Перевіряємо, чи є точні співпадіння для студента
+                        const placesWithExactMatch = placesResult.rows.map((place) => {
+                            const isExactMatch = studentInfo?.specialty_id && studentInfo?.course ?
+                                place.specialty_id === studentInfo.specialty_id && place.course === studentInfo.course :
+                                false;
+                            return {
+                                id: place.id.toString(),
+                                type: place.type,
+                                availableSpots: place.available_spots,
+                                course: place.course,
+                                specialty_id: place.specialty_id,
+                                specialty_name: place.specialty_name,
+                                specialty_code: place.specialty_code,
+                                faculty_id: place.faculty_id,
+                                faculty_name: place.faculty_name,
+                                max_students: place.max_students,
+                                current_students: place.current_students,
+                                requirements: place.requirements,
+                                description: place.description,
+                                matchScore: isExactMatch ? 100 : 50,
+                                isExactMatch
+                            };
+                        });
+                        // Рахуємо статистику
+                        const totalAvailable = placesResult.rows.reduce((sum, place) => sum + place.available_spots, 0);
+                        const courseworkCount = placesResult.rows
+                            .filter(p => p.type === 'coursework')
+                            .reduce((sum, p) => sum + p.available_spots, 0);
+                        const diplomaCount = placesResult.rows
+                            .filter(p => p.type === 'diploma')
+                            .reduce((sum, p) => sum + p.available_spots, 0);
+                        const practiceCount = placesResult.rows
+                            .filter(p => p.type === 'practice')
+                            .reduce((sum, p) => sum + p.available_spots, 0);
+                        availablePlacesData = {
+                            totalAvailable,
+                            coursework: courseworkCount,
+                            diploma: diplomaCount,
+                            practice: practiceCount,
+                            details: placesWithExactMatch
+                        };
+                        console.log(`📊 Availability summary: Total: ${totalAvailable}, Exact matches: ${placesWithExactMatch.filter(p => p.isExactMatch).length}`);
+                    }
+                }
+                catch (placesError) {
+                    console.error(`❌ Error fetching available places:`, placesError);
+                }
+            }
+            // ========== КІНЕЦЬ ПОШУКУ ДОСТУПНИХ МІСЦЬ ==========
             // Пошук у роботах викладача
             const worksResult = await pool.query(`SELECT id, title, description, type, year
            FROM teacher_works 
@@ -1272,20 +1858,18 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
            AND (topic ILIKE $2 OR description ILIKE $2 OR $2 = '')
            LIMIT 5`, [teacherId, `%${decodedQuery}%`]);
             console.log(`   Found: ${worksResult.rows.length} works, ${directionsResult.rows.length} directions, ${topicsResult.rows.length} topics`);
-            // Розраховуємо загальну релевантність з усіх джерел
+            // Розраховуємо релевантність
             const skillsRelevance = calculateSkillsRelevance(decodedQuery, skills);
             const worksRelevance = calculateWorksRelevance(decodedQuery, worksResult.rows);
             const directionsRelevance = calculateDirectionsRelevance(decodedQuery, directionsResult.rows);
             const topicsRelevance = calculateTopicsRelevance(decodedQuery, topicsResult.rows);
-            // Загальна релевантність (з вагами)
-            const totalRelevance = Math.min(100, skillsRelevance * 0.4 + // Навички - 40%
-                worksRelevance * 0.3 + // Роботи - 30%
-                directionsRelevance * 0.2 + // Напрямки - 20%
-                topicsRelevance * 0.1 // Теми - 10%
-            );
-            // Формуємо об'єднані результати пошуку
+            // Загальна релевантність
+            const totalRelevance = Math.min(100, skillsRelevance * 0.4 +
+                worksRelevance * 0.3 +
+                directionsRelevance * 0.2 +
+                topicsRelevance * 0.1);
+            // Формуємо результати пошуку
             const searchResults = [
-                // Навички
                 ...skills
                     .filter(skill => skill.toLowerCase().includes(decodedQuery.toLowerCase()))
                     .slice(0, 3)
@@ -1295,7 +1879,6 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                     title: skill,
                     description: `Навичка викладача`
                 })),
-                // Роботи
                 ...worksResult.rows.map((work) => ({
                     type: 'work',
                     id: work.id.toString(),
@@ -1304,24 +1887,22 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                     subtype: work.type,
                     year: work.year
                 })),
-                // Напрямки
                 ...directionsResult.rows.map((direction) => ({
                     type: 'direction',
                     id: direction.id.toString(),
                     title: direction.area,
                     description: direction.description
                 })),
-                // Теми
                 ...topicsResult.rows.map((topic) => ({
                     type: 'future_topic',
                     id: topic.id.toString(),
                     title: topic.topic,
                     description: topic.description
                 }))
-            ].slice(0, 8); // Обмежуємо загальну кількість результатів
-            console.log(`   Relevance: ${Math.round(totalRelevance)}% (skills: ${Math.round(skillsRelevance)}%, works: ${Math.round(worksRelevance)}%, directions: ${Math.round(directionsRelevance)}%, topics: ${Math.round(topicsRelevance)}%)`);
-            console.log(`   Matches found: ${searchResults.length}`);
-            return {
+            ].slice(0, 8);
+            console.log(`   Relevance: ${Math.round(totalRelevance)}%`);
+            // Формуємо результат для викладача
+            const teacherResult = {
                 teacher: {
                     id: teacher.id.toString(),
                     name: teacher.name,
@@ -1331,11 +1912,16 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                     facultyId: teacher.faculty_id,
                     bio: teacher.bio || "",
                     avatarUrl: teacher.avatar_url,
-                    email: teacher.email, // Тепер email буде з таблиці users
+                    email: teacher.email,
                     officeHours: teacher.office_hours || "",
                     phone: teacher.phone || "",
                     website: teacher.website || "",
-                    skills: skills
+                    skills: skills,
+                    rating: 4.5,
+                    studentCount: 0,
+                    projectsCompleted: 0,
+                    isAvailable: availablePlacesData ? availablePlacesData.totalAvailable > 0 : true,
+                    expertise: skills.slice(0, 5)
                 },
                 relevanceScore: Math.round(totalRelevance),
                 matchCount: searchResults.length,
@@ -1353,41 +1939,45 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
                     topics: Math.round(topicsRelevance)
                 }
             };
+            // Додаємо дані про доступні місця
+            if (availablePlacesData) {
+                teacherResult.availablePlaces = availablePlacesData;
+                if (studentInfo) {
+                    teacherResult.studentFilters = {
+                        specialtyId: studentInfo.specialty_id,
+                        specialtyCode: studentInfo.specialty_code,
+                        course: studentInfo.course,
+                        facultyId: studentInfo.faculty_id
+                    };
+                }
+            }
+            return teacherResult;
         }));
-        // Фільтруємо викладачів з релевантністю > 0 і сортуємо за релевантністю
+        // Фільтруємо та сортуємо викладачів
         const filteredTeachers = teachersWithMatches
             .filter(teacher => teacher.relevanceScore > 0)
             .sort((a, b) => b.relevanceScore - a.relevanceScore)
             .slice(0, 15);
         console.log(`\n🎯 FINAL RESULTS:`);
-        console.log(`   Total teachers processed: ${finalTeachersResult.rows.length}`);
-        console.log(`   Matching teachers found: ${filteredTeachers.length}`);
-        console.log(`   Faculty filter: ${facultyInfo?.name || facultyId || 'all'}`);
-        console.log(`   Top match score: ${filteredTeachers[0]?.relevanceScore || 0}%`);
-        if (filteredTeachers.length > 0) {
-            console.log(`   Top 3 matches:`);
-            filteredTeachers.slice(0, 3).forEach((teacher, index) => {
-                console.log(`     ${index + 1}. ${teacher.teacher.name} - ${teacher.relevanceScore}% - ${teacher.matchCount} matches - Email: ${teacher.teacher.email}`);
-            });
-        }
+        console.log(`   Total teachers: ${filteredTeachers.length}`);
+        const teachersWithPlaces = filteredTeachers.filter(t => t.availablePlaces);
+        console.log(`   Teachers with available places: ${teachersWithPlaces.length}`);
         res.json({
             teachers: filteredTeachers,
             searchQuery: decodedQuery,
             totalCount: filteredTeachers.length,
             facultyFilter: facultyInfo || facultyId,
             summary: {
-                totalTeachers: finalTeachersResult.rows.length,
+                totalTeachers: teachersResult.rows.length,
                 matchingTeachers: filteredTeachers.length,
                 topMatch: filteredTeachers[0]?.relevanceScore || 0,
-                facultyName: facultyInfo?.name || finalTeachersResult.rows[0]?.faculty_name || "Не вказано",
-                facultyExists: facultyInfo?.exists ?? true
-            },
-            debug: {
-                facultyRequested: facultyId,
-                facultyUsed: facultyInfo,
-                searchQueryLength: decodedQuery.length,
-                originalQueryResults: teachersResult.rows.length,
-                alternativeQueryUsed: teachersResult.rows.length === 0
+                facultyName: facultyInfo?.name || teachersResult.rows[0]?.faculty_name || "Не вказано",
+                facultyExists: facultyInfo?.exists ?? true,
+                availablePlaces: {
+                    totalTeachersWithPlaces: teachersWithPlaces.length,
+                    totalAvailableSpots: teachersWithPlaces.reduce((sum, t) => sum + (t.availablePlaces?.totalAvailable || 0), 0),
+                    exactMatches: teachersWithPlaces.filter(t => t.availablePlaces?.details?.some((d) => d.isExactMatch)).length
+                }
             }
         });
     }
@@ -1395,167 +1985,95 @@ app.post("/api/teachers/match", authenticateToken, async (req, res) => {
         console.error("❌ ERROR in teacher matching:", err);
         res.status(500).json({
             message: "Database error matching teachers",
-            error: err instanceof Error ? err.message : 'Unknown error',
-            teachers: [],
-            searchQuery: req.body.topic || req.body.idea,
-            totalCount: 0,
-            facultyFilter: req.body.facultyId || 'all',
-            summary: {
-                totalTeachers: 0,
-                matchingTeachers: 0,
-                facultyName: "Помилка пошуку",
-                facultyExists: false
-            }
+            error: err instanceof Error ? err.message : 'Unknown error'
         });
     }
 });
-// Покращені функції для розрахунку релевантності
-function calculateSkillsRelevance(searchQuery, skills) {
-    if (skills.length === 0)
+// Допоміжні функції для розрахунку релевантності
+function calculateSkillsRelevance(query, skills) {
+    if (!skills || skills.length === 0)
         return 0;
-    const query = searchQuery.toLowerCase();
-    let totalScore = 0;
-    let matchesFound = 0;
+    const queryWords = query.toLowerCase().split(/\s+/);
+    let matches = 0;
     skills.forEach(skill => {
         const skillLower = skill.toLowerCase();
-        if (skillLower === query) {
-            totalScore += 100;
-            matchesFound++;
-            console.log(`      🎯 Exact skill match: "${skill}"`);
-        }
-        else if (skillLower.includes(query)) {
-            totalScore += 80;
-            matchesFound++;
-            console.log(`      ✅ Partial skill match: "${skill}"`);
-        }
-        else {
-            const queryWords = query.split(/\s+/).filter(word => word.length > 2);
-            const skillWords = skillLower.split(/\s+/);
-            let wordMatches = 0;
-            queryWords.forEach(word => {
-                if (skillWords.some(skillWord => skillWord.includes(word))) {
-                    wordMatches++;
-                    totalScore += 30;
-                    matchesFound++;
-                }
-            });
-            if (wordMatches === queryWords.length && wordMatches > 0) {
-                totalScore += 20;
-                console.log(`      🔍 Multi-word skill match: "${skill}"`);
-            }
+        if (queryWords.some(word => skillLower.includes(word))) {
+            matches++;
         }
     });
-    const maxPossibleScore = skills.length * 100;
-    const relevance = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
-    console.log(`      Skills relevance: ${Math.round(relevance)}% (${matchesFound} matches)`);
-    return relevance;
+    return Math.min(100, (matches / skills.length) * 100);
 }
-function calculateWorksRelevance(searchQuery, works) {
-    if (works.length === 0)
+function calculateWorksRelevance(query, works) {
+    if (!works || works.length === 0)
         return 0;
-    const query = searchQuery.toLowerCase();
-    let totalScore = 0;
+    const queryLower = query.toLowerCase();
+    let totalRelevance = 0;
     works.forEach(work => {
         const title = work.title?.toLowerCase() || '';
         const description = work.description?.toLowerCase() || '';
-        if (title.includes(query) || description.includes(query)) {
-            totalScore += 80;
-            console.log(`      📚 Work match: "${work.title}"`);
+        if (title.includes(queryLower) || description.includes(queryLower)) {
+            totalRelevance += 100;
         }
         else {
-            const queryWords = query.split(/\s+/).filter(word => word.length > 2);
+            const queryWords = queryLower.split(/\s+/);
             let wordMatches = 0;
             queryWords.forEach(word => {
                 if (title.includes(word) || description.includes(word)) {
                     wordMatches++;
-                    totalScore += 25;
                 }
             });
-            if (wordMatches === queryWords.length && wordMatches > 0) {
-                totalScore += 15;
-                console.log(`      🔍 Multi-word work match: "${work.title}"`);
-            }
-        }
-        // Бонус за свіжість роботи (до 10%)
-        if (work.year) {
-            const currentYear = new Date().getFullYear();
-            const yearsDiff = currentYear - work.year;
-            if (yearsDiff <= 3) {
-                totalScore += 10;
-            }
-            else if (yearsDiff <= 5) {
-                totalScore += 5;
-            }
+            totalRelevance += (wordMatches / queryWords.length) * 50;
         }
     });
-    const maxPossibleScore = works.length * 90;
-    const relevance = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
-    console.log(`      Works relevance: ${Math.round(relevance)}%`);
-    return relevance;
+    return Math.min(100, totalRelevance / works.length);
 }
-function calculateDirectionsRelevance(searchQuery, directions) {
-    if (directions.length === 0)
+function calculateDirectionsRelevance(query, directions) {
+    if (!directions || directions.length === 0)
         return 0;
-    const query = searchQuery.toLowerCase();
-    let totalScore = 0;
+    const queryLower = query.toLowerCase();
+    let totalRelevance = 0;
     directions.forEach(direction => {
         const area = direction.area?.toLowerCase() || '';
         const description = direction.description?.toLowerCase() || '';
-        if (area.includes(query) || description.includes(query)) {
-            totalScore += 90;
-            console.log(`      🧭 Direction match: "${direction.area}"`);
+        if (area.includes(queryLower) || description.includes(queryLower)) {
+            totalRelevance += 100;
         }
         else {
-            const queryWords = query.split(/\s+/).filter(word => word.length > 2);
+            const queryWords = queryLower.split(/\s+/);
             let wordMatches = 0;
             queryWords.forEach(word => {
                 if (area.includes(word) || description.includes(word)) {
                     wordMatches++;
-                    totalScore += 30;
                 }
             });
-            if (wordMatches === queryWords.length && wordMatches > 0) {
-                totalScore += 20;
-                console.log(`      🔍 Multi-word direction match: "${direction.area}"`);
-            }
+            totalRelevance += (wordMatches / queryWords.length) * 50;
         }
     });
-    const maxPossibleScore = directions.length * 90;
-    const relevance = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
-    console.log(`      Directions relevance: ${Math.round(relevance)}%`);
-    return relevance;
+    return Math.min(100, totalRelevance / directions.length);
 }
-function calculateTopicsRelevance(searchQuery, topics) {
-    if (topics.length === 0)
+function calculateTopicsRelevance(query, topics) {
+    if (!topics || topics.length === 0)
         return 0;
-    const query = searchQuery.toLowerCase();
-    let totalScore = 0;
+    const queryLower = query.toLowerCase();
+    let totalRelevance = 0;
     topics.forEach(topic => {
-        const topicText = topic.topic?.toLowerCase() || '';
+        const topicName = topic.topic?.toLowerCase() || '';
         const description = topic.description?.toLowerCase() || '';
-        if (topicText.includes(query) || description.includes(query)) {
-            totalScore += 95;
-            console.log(`      💡 Topic match: "${topic.topic}"`);
+        if (topicName.includes(queryLower) || description.includes(queryLower)) {
+            totalRelevance += 100;
         }
         else {
-            const queryWords = query.split(/\s+/).filter(word => word.length > 2);
+            const queryWords = queryLower.split(/\s+/);
             let wordMatches = 0;
             queryWords.forEach(word => {
-                if (topicText.includes(word) || description.includes(word)) {
+                if (topicName.includes(word) || description.includes(word)) {
                     wordMatches++;
-                    totalScore += 35;
                 }
             });
-            if (wordMatches === queryWords.length && wordMatches > 0) {
-                totalScore += 25;
-                console.log(`      🔍 Multi-word topic match: "${topic.topic}"`);
-            }
+            totalRelevance += (wordMatches / queryWords.length) * 50;
         }
     });
-    const maxPossibleScore = topics.length * 95;
-    const relevance = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
-    console.log(`      Topics relevance: ${Math.round(relevance)}%`);
-    return relevance;
+    return Math.min(100, totalRelevance / topics.length);
 }
 app.post("/api/generate-structure", async (req, res) => {
     try {
@@ -3206,6 +3724,313 @@ app.delete("/api/chat/:chatId/leave", authenticateToken, async (req, res) => {
     }
 });
 // ============ TEACHER PROFILE ENDPOINTS ============
+// GET /api/teachers/:id - отримати основну інформацію про викладача
+app.get("/api/teachers/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Отримуємо основну інформацію про викладача
+        const teacherResult = await pool.query(`SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.faculty_id,
+        u.department_id,
+        d.name as department_name,
+        f.name as faculty_name,
+        tp.title,
+        tp.bio,
+        tp.avatar_url,
+        tp.office_hours,
+        tp.phone,
+        tp.website,
+        t.skills,
+        tp.created_at,
+        tp.updated_at
+       FROM users u
+       LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN faculties f ON u.faculty_id = f.id
+       LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+       LEFT JOIN teachers t ON u.id = t.id
+       WHERE u.id = $1 AND u.role = 'teacher'`, [id]);
+        if (teacherResult.rows.length === 0) {
+            return res.status(404).json({ message: "Викладача не знайдено" });
+        }
+        const teacherData = teacherResult.rows[0];
+        // Розділяємо ім'я на частини
+        const nameParts = teacherData.name.split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        // Форматуємо skills
+        let skills = [];
+        if (teacherData.skills && Array.isArray(teacherData.skills)) {
+            skills = teacherData.skills;
+        }
+        else if (typeof teacherData.skills === 'string') {
+            try {
+                skills = JSON.parse(teacherData.skills);
+            }
+            catch {
+                skills = teacherData.skills.split(',').map(s => s.trim());
+            }
+        }
+        res.json({
+            id: teacherData.id,
+            name: teacherData.name,
+            firstName,
+            lastName,
+            title: teacherData.title || "",
+            department: teacherData.department_name || "Кафедра не вказана",
+            departmentId: teacherData.department_id,
+            faculty: teacherData.faculty_name || "Факультет не вказаний",
+            facultyId: teacherData.faculty_id,
+            email: teacherData.email,
+            bio: teacherData.bio || "",
+            avatarUrl: teacherData.avatar_url,
+            officeHours: teacherData.office_hours || "",
+            phone: teacherData.phone || "",
+            website: teacherData.website || "",
+            skills: skills,
+            createdAt: teacherData.created_at,
+            updatedAt: teacherData.updated_at
+        });
+    }
+    catch (err) {
+        console.error("Error fetching teacher:", err);
+        res.status(500).json({ message: "Database error fetching teacher" });
+    }
+});
+// GET /api/faculty/:facultyId/teachers - отримати всіх викладачів факультету (коректна версія)
+app.get("/api/faculty/:facultyId/teachers", async (req, res) => {
+    try {
+        const { facultyId } = req.params;
+        console.log(`🔍 Fetching teachers for faculty ID: ${facultyId}`);
+        // Основний запит для отримання інформації про викладачів
+        const teachersResult = await pool.query(`SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.faculty_id,
+        u.department_id,
+        d.name as department_name,
+        f.name as faculty_name,
+        COALESCE(tp.title, 'Викладач') as title,
+        COALESCE(tp.bio, '') as bio,
+        COALESCE(tp.avatar_url, u.avatar) as avatar_url,
+        COALESCE(tp.office_hours, '') as office_hours,
+        COALESCE(tp.phone, '') as phone,
+        COALESCE(tp.website, '') as website,
+        COALESCE(t.skills, '[]'::jsonb) as skills,
+        tp.created_at,
+        tp.updated_at
+       FROM users u
+       JOIN faculties f ON u.faculty_id = f.id
+       LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN teachers t ON u.id = t.id
+       LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+       WHERE u.role = 'teacher' 
+         AND u.faculty_id = $1
+       ORDER BY u.name`, [facultyId]);
+        console.log(`✅ Found ${teachersResult.rows.length} teachers`);
+        const teacherIds = teachersResult.rows.map(row => row.id);
+        // Отримуємо кількість студентів для кожного викладача
+        let studentCountsMap = new Map();
+        if (teacherIds.length > 0) {
+            try {
+                const studentCountsResult = await pool.query(`SELECT teacher_id, COUNT(*) as student_count 
+           FROM teacher_students 
+           WHERE teacher_id = ANY($1::int[])
+           GROUP BY teacher_id`, [teacherIds]);
+                studentCountsResult.rows.forEach(row => {
+                    studentCountsMap.set(row.teacher_id, parseInt(row.student_count));
+                });
+            }
+            catch (error) {
+                console.warn("Could not fetch student counts:", error);
+            }
+        }
+        // Отримуємо кількість робіт (проектів) для кожного викладача
+        let worksCountMap = new Map();
+        if (teacherIds.length > 0) {
+            try {
+                const worksCountResult = await pool.query(`SELECT user_id, COUNT(*) as works_count 
+           FROM teacher_works 
+           WHERE user_id = ANY($1::int[])
+           GROUP BY user_id`, [teacherIds]);
+                worksCountResult.rows.forEach(row => {
+                    worksCountMap.set(row.user_id, parseInt(row.works_count));
+                });
+            }
+            catch (error) {
+                console.warn("Could not fetch works counts:", error);
+            }
+        }
+        // Формуємо відповідь
+        const teachers = teachersResult.rows.map(row => {
+            const nameParts = row.name.split(' ');
+            const firstName = nameParts[0] || '';
+            const lastName = nameParts.slice(1).join(' ') || '';
+            // Форматуємо skills - безпечна обробка JSON
+            let skills = [];
+            try {
+                if (row.skills) {
+                    if (Array.isArray(row.skills)) {
+                        skills = row.skills;
+                    }
+                    else if (typeof row.skills === 'string') {
+                        // Спробуємо розпарсити JSON
+                        const parsed = JSON.parse(row.skills);
+                        if (Array.isArray(parsed)) {
+                            skills = parsed;
+                        }
+                    }
+                    else if (row.skills && typeof row.skills === 'object') {
+                        // Якщо це вже об'єкт JSONB
+                        skills = Object.values(row.skills).filter((s) => typeof s === 'string');
+                    }
+                }
+            }
+            catch (error) {
+                console.warn(`Could not parse skills for teacher ${row.id}:`, row.skills);
+                skills = [];
+            }
+            // Визначаємо доступність на основі office_hours
+            const isAvailable = row.office_hours && row.office_hours.trim() !== '';
+            // Отримуємо статистику
+            const studentCount = studentCountsMap.get(row.id) || 0;
+            const worksCount = worksCountMap.get(row.id) || 0;
+            return {
+                id: row.id.toString(),
+                name: row.name,
+                firstName,
+                lastName,
+                title: row.title,
+                department: row.department_name || "Кафедра не вказана",
+                departmentId: row.department_id,
+                faculty: row.faculty_name || "Факультет не вказаний",
+                facultyId: row.faculty_id,
+                email: row.email,
+                bio: row.bio || "Опис відсутній",
+                avatarUrl: row.avatar_url,
+                officeHours: row.office_hours || "Не вказано",
+                phone: row.phone || "",
+                website: row.website || "",
+                skills: skills,
+                rating: 4.5, // Статичний рейтинг поки що
+                studentCount: studentCount,
+                projectsCompleted: worksCount, // Використовуємо кількість робіт як projectsCompleted
+                isAvailable: isAvailable,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
+            };
+        });
+        res.json(teachers);
+    }
+    catch (err) {
+        console.error("Error fetching faculty teachers:", err);
+        res.status(500).json({
+            message: "Database error fetching faculty teachers",
+            error: err instanceof Error ? err.message : "Unknown error"
+        });
+    }
+});
+// GET /api/teachers/:id/works - отримати роботи викладача
+app.get("/api/teachers/:id/works", async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Перевіряємо чи користувач є викладачем
+        const userCheck = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+        if (userCheck.rows.length === 0 || userCheck.rows[0].role !== 'teacher') {
+            return res.status(404).json({ message: "Викладача не знайдено" });
+        }
+        const result = await pool.query(`SELECT 
+        id,
+        title,
+        type,
+        year,
+        description,
+        file_url,
+        publication_url,
+        created_at
+       FROM teacher_works 
+       WHERE user_id = $1 
+       ORDER BY year DESC, created_at DESC`, [id]);
+        const works = result.rows.map((row) => ({
+            id: row.id.toString(),
+            title: row.title,
+            type: row.type,
+            year: row.year,
+            description: row.description,
+            fileUrl: row.file_url,
+            publicationUrl: row.publication_url,
+            createdAt: row.created_at
+        }));
+        res.json(works);
+    }
+    catch (err) {
+        console.error("Error fetching teacher works:", err);
+        res.status(500).json({ message: "Database error fetching teacher works" });
+    }
+});
+// GET /api/teachers/:id/directions - отримати напрямки досліджень викладача
+app.get("/api/teachers/:id/directions", async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Перевіряємо чи користувач є викладачем
+        const userCheck = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+        if (userCheck.rows.length === 0 || userCheck.rows[0].role !== 'teacher') {
+            return res.status(404).json({ message: "Викладача не знайдено" });
+        }
+        const result = await pool.query(`SELECT 
+        id,
+        area,
+        description,
+        created_at
+       FROM teacher_research_directions 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC`, [id]);
+        const directions = result.rows.map((row) => ({
+            id: row.id.toString(),
+            area: row.area,
+            description: row.description,
+            createdAt: row.created_at
+        }));
+        res.json(directions);
+    }
+    catch (err) {
+        console.error("Error fetching teacher directions:", err);
+        res.status(500).json({ message: "Database error fetching teacher directions" });
+    }
+});
+// GET /api/teachers/:id/topics - отримати майбутні теми викладача
+app.get("/api/teachers/:id/topics", async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Перевіряємо чи користувач є викладачем
+        const userCheck = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+        if (userCheck.rows.length === 0 || userCheck.rows[0].role !== 'teacher') {
+            return res.status(404).json({ message: "Викладача не знайдено" });
+        }
+        const result = await pool.query(`SELECT 
+        id,
+        topic,
+        description,
+        created_at
+       FROM teacher_future_topics 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC`, [id]);
+        const topics = result.rows.map((row) => ({
+            id: row.id.toString(),
+            topic: row.topic,
+            description: row.description,
+            createdAt: row.created_at
+        }));
+        res.json(topics);
+    }
+    catch (err) {
+        console.error("Error fetching teacher topics:", err);
+        res.status(500).json({ message: "Database error fetching teacher topics" });
+    }
+});
 // GET /api/teacher/profile - отримати профіль викладача
 app.get("/api/teacher/profile", authenticateToken, async (req, res) => {
     try {
@@ -3790,12 +4615,21 @@ app.get("/api/student/profile", authenticateToken, async (req, res) => {
             return res.status(401).json({ message: "Unauthorized" });
         }
         const result = await pool.query(`SELECT 
+        u.id,
         u.name,
         u.email,
+        u.role,
         u.faculty_id,
         u.department_id,
+        u.specialty_id,
+        u.group_id,
         f.name as faculty_name,
-        d.name as department_name, 
+        d.name as department_name,
+        s.name as specialty_name,
+        s.code as specialty_code,
+        g.name as group_name,
+        g.course as group_course,
+        g.education_level,
         sp.bio,
         sp.student_group as "group",
         sp.course,
@@ -3807,6 +4641,8 @@ app.get("/api/student/profile", authenticateToken, async (req, res) => {
        LEFT JOIN student_profiles sp ON u.id = sp.user_id
        LEFT JOIN faculties f ON u.faculty_id = f.id 
        LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN specialties s ON u.specialty_id = s.id
+       LEFT JOIN groups g ON u.group_id = g.id
        WHERE u.id = $1`, [userId]);
         console.log("Query result:", result.rows);
         if (result.rows.length === 0) {
@@ -3814,17 +4650,28 @@ app.get("/api/student/profile", authenticateToken, async (req, res) => {
             return res.status(404).json({ message: "User not found" });
         }
         const profileData = result.rows[0];
+        // Визначаємо курс: пріоритет має курс з groups, потім з student_profiles
+        const course = profileData.group_course || profileData.course;
+        // Визначаємо групу: пріоритет має назва з groups, потім з student_profiles
+        const group = profileData.group_name || profileData.group;
         // Формуємо відповідь з правильними назвами полів
         const response = {
+            id: profileData.id,
             name: profileData.name,
             email: profileData.email,
-            faculty: profileData.faculty_name, // використовуємо назву факультету
-            faculty_id: profileData.faculty_id, // або ID, якщо потрібно
-            department: profileData.department_name, // використовуємо назву кафедри
-            department_id: profileData.department_id, // або ID, якщо потрібно
+            role: profileData.role,
+            faculty: profileData.faculty_name,
+            faculty_id: profileData.faculty_id,
+            department: profileData.department_name,
+            department_id: profileData.department_id,
+            specialty: profileData.specialty_name,
+            specialty_code: profileData.specialty_code,
+            specialty_id: profileData.specialty_id,
+            group: group,
+            group_id: profileData.group_id,
+            course: course,
+            education_level: profileData.education_level,
             bio: profileData.bio,
-            group: profileData.group,
-            course: profileData.course,
             avatar_url: profileData.avatar_url,
             phone: profileData.phone,
             linkedin_url: profileData.linkedin_url,
@@ -3842,65 +4689,108 @@ app.get("/api/student/profile", authenticateToken, async (req, res) => {
 app.put("/api/student/profile", authenticateToken, async (req, res) => {
     try {
         const userId = req.user?.userId;
-        const { name, bio, group, course, faculty, // отримуємо назву факультету
-        email, phone, linkedin_url, github_url } = req.body;
+        const { name, bio, phone, linkedin_url, github_url,
+        // group та course тепер не оновлюємо тут, бо вони беруться з реєстрації
+         } = req.body;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
         console.log("Updating profile for user:", userId, "Data:", req.body);
-        // Спочатку отримуємо faculty_id за назвою факультету
-        let faculty_id = null;
-        if (faculty) {
-            const facultyResult = await pool.query('SELECT id FROM faculties WHERE name = $1', [faculty]);
-            if (facultyResult.rows.length > 0) {
-                faculty_id = facultyResult.rows[0].id;
-            }
+        // Отримуємо поточні дані користувача
+        const currentUser = await pool.query(`SELECT name, email, group_id, specialty_id 
+       FROM users WHERE id = $1`, [userId]);
+        if (currentUser.rows.length === 0) {
+            return res.status(404).json({ message: "User not found" });
         }
-        // Оновлюємо основну інформацію в users
+        const currentName = currentUser.rows[0].name;
+        const currentEmail = currentUser.rows[0].email;
+        // Використовуємо поточні значення, якщо не надано нових
+        const updatedName = name || currentName;
+        // Оновлюємо основну інформацію в users (тільки name)
         await pool.query(`UPDATE users 
-       SET name = $1, email = $2 ${faculty_id ? ', faculty_id = $3' : ''}
-       WHERE id = ${faculty_id ? '$4' : '$3'}`, faculty_id
-            ? [name, email, faculty_id, userId]
-            : [name, email, userId]);
+       SET name = $1, updated_at = NOW()
+       WHERE id = $2`, [updatedName, userId]);
         // Перевіряємо чи профіль вже існує
         const existingProfile = await pool.query('SELECT user_id FROM student_profiles WHERE user_id = $1', [userId]);
         if (existingProfile.rows.length > 0) {
             // Оновлюємо існуючий профіль
             await pool.query(`UPDATE student_profiles 
-         SET bio = $1, student_group = $2, course = $3, 
-             phone = $4, linkedin_url = $5, github_url = $6
-         WHERE user_id = $7`, [bio, group, course, phone, linkedin_url, github_url, userId]);
+         SET bio = $1, phone = $2, linkedin_url = $3, github_url = $4,
+             updated_at = NOW()
+         WHERE user_id = $5`, [bio, phone, linkedin_url, github_url, userId]);
         }
         else {
             // Створюємо новий профіль
             await pool.query(`INSERT INTO student_profiles 
-         (user_id, bio, student_group, course, phone, linkedin_url, github_url, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`, [userId, bio, group, course, phone, linkedin_url, github_url]);
+         (user_id, bio, phone, linkedin_url, github_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`, [userId, bio, phone, linkedin_url, github_url]);
         }
-        // Повертаємо оновлені дані
+        // Повертаємо повні оновлені дані
         const updatedResult = await pool.query(`SELECT 
+        u.id,
         u.name,
         u.email,
+        u.role,
         u.faculty_id,
+        u.department_id,
+        u.specialty_id,
+        u.group_id,
         f.name as faculty_name,
+        d.name as department_name,
+        s.name as specialty_name,
+        s.code as specialty_code,
+        g.name as group_name,
+        g.course as group_course,
+        g.education_level,
         sp.bio,
         sp.student_group as "group",
         sp.course,
+        sp.avatar_url,
         sp.phone,
         sp.linkedin_url,
         sp.github_url
        FROM users u
        LEFT JOIN student_profiles sp ON u.id = sp.user_id
        LEFT JOIN faculties f ON u.faculty_id = f.id
+       LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN specialties s ON u.specialty_id = s.id
+       LEFT JOIN groups g ON u.group_id = g.id
        WHERE u.id = $1`, [userId]);
+        const updatedProfile = updatedResult.rows[0];
+        // Формуємо відповідь
+        const response = {
+            id: updatedProfile.id,
+            name: updatedProfile.name,
+            email: updatedProfile.email,
+            role: updatedProfile.role,
+            faculty: updatedProfile.faculty_name,
+            faculty_id: updatedProfile.faculty_id,
+            department: updatedProfile.department_name,
+            department_id: updatedProfile.department_id,
+            specialty: updatedProfile.specialty_name,
+            specialty_code: updatedProfile.specialty_code,
+            specialty_id: updatedProfile.specialty_id,
+            group: updatedProfile.group_name || updatedProfile.group,
+            group_id: updatedProfile.group_id,
+            course: updatedProfile.group_course || updatedProfile.course,
+            education_level: updatedProfile.education_level,
+            bio: updatedProfile.bio,
+            avatar_url: updatedProfile.avatar_url,
+            phone: updatedProfile.phone,
+            linkedin_url: updatedProfile.linkedin_url,
+            github_url: updatedProfile.github_url
+        };
         res.json({
             message: "Student profile updated successfully",
-            profile: updatedResult.rows[0]
+            profile: response
         });
     }
     catch (err) {
         console.error("Error updating student profile:", err);
-        res.status(500).json({ message: "Database error updating student profile" });
+        res.status(500).json({
+            message: "Database error updating student profile",
+            error: err instanceof Error ? err.message : 'Unknown error'
+        });
     }
 });
 // GET /api/student/projects - отримати проєкти студента
@@ -4081,15 +4971,22 @@ app.post("/api/student/achievements", authenticateToken, async (req, res) => {
         if (!title || !date) {
             return res.status(400).json({ message: "Title and date are required" });
         }
+        // Validate date format
+        const dateObj = new Date(date);
+        if (isNaN(dateObj.getTime())) {
+            return res.status(400).json({ message: "Invalid date format. Please use YYYY-MM-DD format." });
+        }
+        // Format date to YYYY-MM-DD for PostgreSQL
+        const formattedDate = dateObj.toISOString().split('T')[0];
         const result = await pool.query(`INSERT INTO student_achievements 
        (user_id, title, description, date, type, organization, certificate_url, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-       RETURNING id`, [userId, title, description || '', date, type, organization, certificateUrl]);
+       RETURNING id`, [userId, title, description || '', formattedDate, type, organization, certificateUrl]);
         const newAchievement = {
             id: result.rows[0].id.toString(),
             title,
             description: description || '',
-            date,
+            date: formattedDate,
             type,
             organization,
             certificateUrl,
@@ -4207,15 +5104,22 @@ app.post("/api/student/goals", authenticateToken, async (req, res) => {
         if (!goal || !deadline) {
             return res.status(400).json({ message: "Goal and deadline are required" });
         }
+        // Validate deadline format
+        const deadlineObj = new Date(deadline);
+        if (isNaN(deadlineObj.getTime())) {
+            return res.status(400).json({ message: "Invalid deadline format. Please use YYYY-MM-DD format." });
+        }
+        // Format deadline to YYYY-MM-DD for PostgreSQL
+        const formattedDeadline = deadlineObj.toISOString().split('T')[0];
         const result = await pool.query(`INSERT INTO student_goals 
        (user_id, goal, description, deadline, status, priority, progress, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-       RETURNING id`, [userId, goal, description || '', deadline, status, priority, progress]);
+       RETURNING id`, [userId, goal, description || '', formattedDeadline, status, priority, progress]);
         const newGoal = {
             id: result.rows[0].id.toString(),
             goal,
             description: description || '',
-            deadline,
+            deadline: formattedDeadline,
             status,
             priority,
             progress,
@@ -4279,34 +5183,40 @@ app.delete("/api/student/goals/:goalId", authenticateToken, async (req, res) => 
         res.status(500).json({ message: "Database error deleting student goal" });
     }
 });
-// GET /api/student/applications - отримати заявки студента
+// GET /api/student/applications - отримати заявки поточного студента
 app.get("/api/student/applications", authenticateToken, async (req, res) => {
     try {
         const userId = req.user?.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
+        // ✅ ВИПРАВЛЕНО: Перевірка, чи користувач є студентом
+        const userCheck = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Користувача не знайдено"
+            });
+        }
+        const userRole = userCheck.rows[0].role;
+        if (userRole !== 'student') {
+            return res.status(403).json({
+                message: "Доступ заборонено. Тільки для студентів.",
+                userRole: userRole
+            });
+        }
+        // Отримуємо всі заявки студента
         const result = await pool.query(`SELECT 
-        id,
-        topic,
-        description,
-        goals,
-        requirements,
-        teacher_id,
-        deadline,
-        status,
-        student_name,
-        student_email,
-        student_phone,
-        student_program,
-        student_year,
-        application_date,
-        rejection_reason,
-        created_at,
-        updated_at
-       FROM student_applications 
-       WHERE student_id = $1 
-       ORDER BY created_at DESC`, [userId]);
+        sa.*,
+        t.name as teacher_name,
+        t.title as teacher_title,
+        t.department as teacher_department,
+        t.email as teacher_email,
+        t.avatar as teacher_avatar,
+        COUNT(*) OVER() as total_count
+       FROM student_applications sa
+       LEFT JOIN teachers t ON sa.teacher_id = t.id
+       WHERE sa.student_id = $1
+       ORDER BY sa.created_at DESC`, [userId]);
         const applications = result.rows.map((row) => ({
             id: row.id.toString(),
             topic: row.topic,
@@ -4314,6 +5224,11 @@ app.get("/api/student/applications", authenticateToken, async (req, res) => {
             goals: row.goals,
             requirements: row.requirements,
             teacherId: row.teacher_id ? row.teacher_id.toString() : null,
+            teacher_name: row.teacher_name,
+            teacher_title: row.teacher_title,
+            teacher_department: row.teacher_department,
+            teacher_email: row.teacher_email,
+            teacher_avatar: row.teacher_avatar,
             deadline: row.deadline,
             status: row.status || 'pending',
             studentName: row.student_name,
@@ -4321,83 +5236,154 @@ app.get("/api/student/applications", authenticateToken, async (req, res) => {
             studentPhone: row.student_phone,
             studentProgram: row.student_program,
             studentYear: row.student_year,
+            studentGroup: row.student_group,
+            studentIdNumber: row.student_id_number,
+            studentSpecialtyId: row.student_specialty_id,
+            studentSpecialtyCode: row.student_specialty_code,
+            studentFacultyId: row.student_faculty_id,
             applicationDate: row.application_date,
             rejectionReason: row.rejection_reason,
+            feedback: row.feedback,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            workType: row.work_type || 'coursework',
+            type: row.type || 'course'
         }));
-        res.json(applications);
+        // Підраховуємо активні заявки (тільки pending та approved)
+        const activeApplications = applications.filter(app => app.status === 'pending' || app.status === 'approved').length;
+        res.json({
+            applications,
+            total: result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0,
+            activeApplications,
+            limit: 3
+        });
     }
     catch (err) {
         console.error("Error fetching student applications:", err);
-        res.status(500).json({ message: "Database error fetching student applications" });
+        res.status(500).json({
+            message: "Database error fetching student applications",
+            error: err instanceof Error ? err.message : 'Unknown error'
+        });
     }
 });
-// POST /api/student/applications - створити нову заявку
+// POST /api/student/applications - створити заявку на роботу з обмеженнями
 app.post("/api/student/applications", authenticateToken, async (req, res) => {
+    let client;
     try {
         const userId = req.user?.userId;
-        console.log('📥 Received application data:', {
-            userId,
-            body: req.body,
-            headers: req.headers
-        });
         if (!userId) {
-            return res.status(401).json({ message: "Unauthorized" });
+            return res.status(401).json({ message: "Unauthorized - no user ID" });
         }
-        const { topic, description, goals, requirements, teacherId, deadline, student_name, student_email, student_phone, student_program, student_year } = req.body;
-        console.log('🔍 Parsed fields:', {
-            topic: !!topic,
-            description: !!description,
-            goals: !!goals,
-            requirements: !!requirements,
-            teacherId: !!teacherId,
-            deadline: !!deadline,
-            student_name: !!student_name,
-            student_email: !!student_email,
-            student_phone: !!student_phone,
-            student_program: !!student_program,
-            student_year: !!student_year
-        });
-        // Валідація обов'язкових полів
-        if (!topic || !description || !goals || !requirements || !deadline || !student_name || !student_email) {
-            console.log('❌ Missing fields:', {
-                topic: !topic,
-                description: !description,
-                goals: !goals,
-                requirements: !requirements,
-                deadline: !deadline,
-                student_name: !student_name,
-                student_email: !student_email
-            });
+        const { topic, description, goals, requirements, teacherId, deadline, student_name, student_email, student_phone, student_program, student_year, student_group, student_id, workType = 'coursework', type = 'course', student_specialty_id, student_specialty_code, student_faculty_id } = req.body;
+        // Перевірка обов'язкових полів
+        const missingFields = [];
+        if (!topic || !topic.trim())
+            missingFields.push('topic');
+        if (!description || !description.trim())
+            missingFields.push('description');
+        if (!goals || !goals.trim())
+            missingFields.push('goals');
+        if (!requirements || !requirements.trim())
+            missingFields.push('requirements');
+        if (!deadline)
+            missingFields.push('deadline');
+        if (!student_name || !student_name.trim())
+            missingFields.push('student_name');
+        if (!student_email || !student_email.trim())
+            missingFields.push('student_email');
+        if (!workType)
+            missingFields.push('workType');
+        if (!teacherId)
+            missingFields.push('teacherId');
+        if (missingFields.length > 0) {
             return res.status(400).json({
                 message: "Missing required fields",
-                details: {
-                    topic: !topic,
-                    description: !description,
-                    goals: !goals,
-                    requirements: !requirements,
-                    deadline: !deadline,
-                    student_name: !student_name,
-                    student_email: !student_email
-                }
+                missingFields: missingFields
+            });
+        }
+        // Валідація workType
+        const validWorkTypes = ['coursework', 'diploma', 'practice'];
+        if (!validWorkTypes.includes(workType)) {
+            return res.status(400).json({
+                message: "Invalid workType. Must be one of: coursework, diploma, practice"
+            });
+        }
+        // Валідація type для сумісності
+        const validTypes = ['course', 'diploma', 'practice'];
+        if (type && !validTypes.includes(type)) {
+            return res.status(400).json({
+                message: "Invalid type. Must be one of: course, diploma, practice"
             });
         }
         // Перевірка формату дати
-        if (isNaN(Date.parse(deadline))) {
-            console.log('❌ Invalid deadline format:', deadline);
+        const deadlineDate = new Date(deadline);
+        if (isNaN(deadlineDate.getTime())) {
             return res.status(400).json({ message: "Invalid deadline format" });
         }
-        // Перевірка, чи існує викладач (якщо вказано)
-        if (teacherId) {
-            const teacherCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND (role = 'teacher' OR role = 'admin')", [teacherId]);
-            if (teacherCheck.rows.length === 0) {
-                console.log('❌ Teacher not found:', teacherId);
-                return res.status(404).json({ message: "Teacher not found" });
+        // ✅ ВИПРАВЛЕНО: Перевірка, чи користувач є студентом
+        const userCheck = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Користувача не знайдено"
+            });
+        }
+        const userRole = userCheck.rows[0].role;
+        if (userRole !== 'student') {
+            return res.status(403).json({
+                message: "Користувач не є студентом. Тільки студенти можуть подавати заявки.",
+                userRole: userRole
+            });
+        }
+        // Перевірка максимальної кількості заявок (максимум 3)
+        const applicationsCount = await pool.query(`SELECT COUNT(*) FROM student_applications 
+       WHERE student_id = $1 AND status NOT IN ('rejected', 'cancelled')`, [userId]);
+        const totalApplications = parseInt(applicationsCount.rows[0].count);
+        if (totalApplications >= 3) {
+            return res.status(400).json({
+                message: "Ви вже маєте максимальну кількість заявок (3). Видаліть або очікуйте відповідь на існуючі заявки перед поданням нових."
+            });
+        }
+        // Перевірка, чи вже є активна заявка до цього викладача
+        const existingApplication = await pool.query(`SELECT id FROM student_applications 
+       WHERE student_id = $1 AND teacher_id = $2 AND status NOT IN ('rejected', 'cancelled')`, [userId, teacherId]);
+        if (existingApplication.rows.length > 0) {
+            return res.status(400).json({
+                message: "У вас вже є активна заявка до цього викладача. Ви можете подати заявку лише до одного викладача одночасно."
+            });
+        }
+        // Перевірка доступності місця у викладача
+        if (workType && student_specialty_id && student_year) {
+            const availablePlace = await pool.query(`SELECT id, available_spots, current_students, max_students 
+         FROM available_places 
+         WHERE teacher_id = $1 
+           AND type = $2 
+           AND specialty_id = $3 
+           AND course = $4 
+           AND available_spots > 0`, [teacherId, workType, student_specialty_id, parseInt(student_year)]);
+            if (availablePlace.rows.length === 0) {
+                return res.status(400).json({
+                    message: "На жалиь, у викладача немає доступних місць для вашої спеціальності та курсу."
+                });
+            }
+            const place = availablePlace.rows[0];
+            // Перевірка, чи є ще доступні місця
+            if (place.available_spots <= 0) {
+                return res.status(400).json({
+                    message: "На жалиь, всі місця у викладача зайняті."
+                });
             }
         }
-        console.log('✅ All validation passed, inserting into database...');
-        const result = await pool.query(`INSERT INTO student_applications (
+        // Перевірка, чи існує викладач
+        const teacherCheck = await pool.query("SELECT id, name, email FROM teachers WHERE id = $1", [teacherId]);
+        if (teacherCheck.rows.length === 0) {
+            return res.status(404).json({ message: "Викладача не знайдено" });
+        }
+        // Використовуємо транзакцію для безпеки
+        client = await pool.connect();
+        await client.query('BEGIN');
+        // Створення заявки
+        const insertQuery = `
+      INSERT INTO student_applications (
         topic, 
         description, 
         goals, 
@@ -4410,47 +5396,83 @@ app.post("/api/student/applications", authenticateToken, async (req, res) => {
         student_phone,
         student_program,
         student_year,
+        student_group,
+        student_id_number,
+        student_specialty_id,
+        student_specialty_code,
+        student_faculty_id,
         status,
         application_date,
         created_at,
-        updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING *`, [
+        updated_at,
+        work_type,
+        type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'pending', $18, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $19, $20)
+      RETURNING *
+    `;
+        const formattedDeadline = deadlineDate.toISOString().split('T')[0];
+        const applicationDate = new Date().toISOString().split('T')[0];
+        const insertParams = [
             topic.trim(),
             description.trim(),
             goals.trim(),
             requirements.trim(),
-            teacherId || null,
-            new Date(deadline).toISOString().split('T')[0],
-            userId,
+            teacherId,
+            formattedDeadline,
+            parseInt(userId),
             student_name.trim(),
             student_email.trim(),
-            student_phone?.trim() || null,
-            student_program?.trim() || null,
-            student_year?.trim() || null,
-            'pending',
-            new Date().toISOString().split('T')[0]
-        ]);
-        const newApplication = result.rows[0];
-        console.log('✅ Application created successfully:', newApplication.id);
-        // Сповіщення викладача (якщо вказано)
-        if (teacherId) {
-            try {
-                await notifyTeacherAboutApplication(teacherId, newApplication);
-                console.log('📧 Notification sent to teacher:', teacherId);
-            }
-            catch (notificationError) {
-                console.error('❌ Failed to send notification to teacher:', notificationError);
-                // Не зупиняємо процес, якщо сповіщення не вдалося
-            }
+            student_phone?.trim() || '',
+            student_program?.trim() || '',
+            student_year?.trim() || '',
+            student_group?.trim() || '',
+            student_id?.trim() || '',
+            student_specialty_id || null,
+            student_specialty_code || '',
+            student_faculty_id || null,
+            applicationDate,
+            workType,
+            type
+        ];
+        const result = await client.query(insertQuery, insertParams);
+        // Оновлення кількості доступних місць у викладача (-1)
+        if (workType && student_specialty_id && student_year) {
+            await client.query(`UPDATE available_places 
+         SET available_spots = available_spots - 1,
+             current_students = current_students + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE teacher_id = $1 
+           AND type = $2 
+           AND specialty_id = $3 
+           AND course = $4 
+           AND available_spots > 0`, [teacherId, workType, student_specialty_id, parseInt(student_year)]);
         }
+        // Створення сповіщення для викладача
+        await client.query(`INSERT INTO notifications 
+       (user_id, type, title, message, data, created_at, is_read)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, false)`, [
+            teacherId,
+            'new_application',
+            'Нова заявка на керівництво',
+            `Студент ${student_name.trim()} подала(-в) заявку на тему "${topic.trim()}"`,
+            JSON.stringify({
+                applicationId: result.rows[0].id,
+                studentId: userId,
+                studentName: student_name.trim(),
+                topic: topic.trim(),
+                workType: workType
+            })
+        ]);
+        await client.query('COMMIT');
+        const newApplication = result.rows[0];
+        // Форматування відповіді
         const applicationResponse = {
             id: newApplication.id.toString(),
             topic: newApplication.topic,
             description: newApplication.description,
             goals: newApplication.goals,
             requirements: newApplication.requirements,
-            teacherId: newApplication.teacher_id ? newApplication.teacher_id.toString() : null,
+            teacherId: newApplication.teacher_id.toString(),
             deadline: newApplication.deadline,
             status: newApplication.status,
             studentName: newApplication.student_name,
@@ -4458,15 +5480,145 @@ app.post("/api/student/applications", authenticateToken, async (req, res) => {
             studentPhone: newApplication.student_phone,
             studentProgram: newApplication.student_program,
             studentYear: newApplication.student_year,
+            studentGroup: newApplication.student_group,
+            studentIdNumber: newApplication.student_id_number,
+            studentSpecialtyId: newApplication.student_specialty_id,
+            studentSpecialtyCode: newApplication.student_specialty_code,
+            studentFacultyId: newApplication.student_faculty_id,
             applicationDate: newApplication.application_date,
             createdAt: newApplication.created_at,
-            updatedAt: newApplication.updated_at
+            updatedAt: newApplication.updated_at,
+            workType: newApplication.work_type,
+            type: newApplication.type,
+            message: "Заявка успішно подана! Викладач отримав сповіщення.",
+            remainingApplications: 3 - (totalApplications + 1)
         };
         res.status(201).json(applicationResponse);
     }
     catch (err) {
-        console.error("❌ Error creating student application:", err);
-        res.status(500).json({ message: "Database error creating student application" });
+        // Відкат транзакції у випадку помилки
+        if (client) {
+            try {
+                await client.query('ROLLBACK');
+            }
+            catch (rollbackError) {
+                console.error('Rollback error:', rollbackError);
+            }
+        }
+        console.error("Error creating student application:", err);
+        // Детальніше логування для PostgreSQL помилок
+        if (err.code) {
+            console.error('Database error details:', {
+                code: err.code,
+                detail: err.detail,
+                table: err.table,
+                constraint: err.constraint,
+                message: err.message
+            });
+        }
+        res.status(500).json({
+            message: "Database error creating student application",
+            error: err instanceof Error ? err.message : 'Unknown error',
+            code: err.code || 'UNKNOWN_ERROR'
+        });
+    }
+    finally {
+        // Безпечне звільнення клієнта
+        if (client) {
+            try {
+                client.release();
+            }
+            catch (releaseError) {
+                console.error('Error releasing client:', releaseError);
+            }
+        }
+    }
+});
+// DELETE /api/student/applications/:id - скасувати заявку та повернути місце
+app.delete("/api/student/applications/:id", authenticateToken, async (req, res) => {
+    let client;
+    try {
+        const userId = req.user?.userId;
+        const applicationId = req.params.id;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // ✅ ВИПРАВЛЕНО: Перевірка, чи користувач є студентом
+        const userCheck = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Користувача не знайдено"
+            });
+        }
+        const userRole = userCheck.rows[0].role;
+        if (userRole !== 'student') {
+            return res.status(403).json({
+                message: "Доступ заборонено. Тільки для студентів.",
+                userRole: userRole
+            });
+        }
+        // Перевіряємо, чи заявка існує та належить студенту
+        const applicationCheck = await pool.query(`SELECT sa.*, ap.id as place_id, ap.type, ap.specialty_id, ap.course
+       FROM student_applications sa
+       LEFT JOIN available_places ap ON sa.teacher_id = ap.teacher_id 
+         AND sa.work_type = ap.type 
+         AND sa.student_specialty_id = ap.specialty_id
+         AND sa.student_year::INTEGER = ap.course
+       WHERE sa.id = $1 AND sa.student_id = $2 AND sa.status = 'pending'`, [applicationId, userId]);
+        if (applicationCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Заявка не знайдена або ви не маєте дозволу на її скасування"
+            });
+        }
+        const application = applicationCheck.rows[0];
+        // Використовуємо транзакцію для безпеки
+        client = await pool.connect();
+        await client.query('BEGIN');
+        // Оновлюємо статус заявки
+        const result = await client.query(`UPDATE student_applications 
+       SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND student_id = $2
+       RETURNING *`, [applicationId, userId]);
+        // Якщо було знайдено місце, повертаємо його
+        if (application.place_id) {
+            await client.query(`UPDATE available_places 
+         SET available_spots = available_spots + 1,
+             current_students = current_students - 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`, [application.place_id]);
+        }
+        await client.query('COMMIT');
+        res.json({
+            message: "Заявка успішно скасована. Місце повернуто викладачу.",
+            application: result.rows[0]
+        });
+    }
+    catch (err) {
+        // Відкат транзакції у випадку помилки
+        if (client) {
+            try {
+                await client.query('ROLLBACK');
+            }
+            catch (rollbackError) {
+                console.error('Rollback error:', rollbackError);
+            }
+        }
+        console.error("Error cancelling application:", err);
+        res.status(500).json({
+            message: "Failed to cancel application",
+            error: err instanceof Error ? err.message : 'Unknown error'
+        });
+    }
+    finally {
+        // Безпечне звільнення клієнта
+        if (client) {
+            try {
+                client.release();
+            }
+            catch (releaseError) {
+                console.error('Error releasing client:', releaseError);
+            }
+        }
     }
 });
 // GET /api/student/applications/:id - отримати конкретну заявку
@@ -4477,24 +5629,30 @@ app.get("/api/student/applications/:id", authenticateToken, async (req, res) => 
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
+        // ✅ ВИПРАВЛЕНО: Перевірка, чи користувач є студентом
+        const userCheck = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Користувача не знайдено"
+            });
+        }
+        const userRole = userCheck.rows[0].role;
+        if (userRole !== 'student') {
+            return res.status(403).json({
+                message: "Доступ заборонено. Тільки для студентів.",
+                userRole: userRole
+            });
+        }
         const result = await pool.query(`SELECT 
-        id,
-        topic,
-        description,
-        goals,
-        requirements,
-        teacher_id,
-        deadline,
-        status,
-        student_name,
-        student_email,
-        student_phone,
-        student_program,
-        student_year,
-        created_at,
-        updated_at
-       FROM student_applications 
-       WHERE id = $1 AND student_id = $2`, [applicationId, userId]);
+        sa.*,
+        t.name as teacher_name,
+        t.title as teacher_title,
+        t.department as teacher_department,
+        t.email as teacher_email,
+        t.avatar as teacher_avatar
+       FROM student_applications sa
+       LEFT JOIN teachers t ON sa.teacher_id = t.id
+       WHERE sa.id = $1 AND sa.student_id = $2`, [applicationId, userId]);
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Application not found" });
         }
@@ -4506,6 +5664,11 @@ app.get("/api/student/applications/:id", authenticateToken, async (req, res) => 
             goals: application.goals,
             requirements: application.requirements,
             teacherId: application.teacher_id ? application.teacher_id.toString() : null,
+            teacher_name: application.teacher_name,
+            teacher_title: application.teacher_title,
+            teacher_department: application.teacher_department,
+            teacher_email: application.teacher_email,
+            teacher_avatar: application.teacher_avatar,
             deadline: application.deadline,
             status: application.status,
             studentName: application.student_name,
@@ -4513,14 +5676,26 @@ app.get("/api/student/applications/:id", authenticateToken, async (req, res) => 
             studentPhone: application.student_phone,
             studentProgram: application.student_program,
             studentYear: application.student_year,
+            studentGroup: application.student_group,
+            studentIdNumber: application.student_id_number,
+            studentSpecialtyId: application.student_specialty_id,
+            studentSpecialtyCode: application.student_specialty_code,
+            studentFacultyId: application.student_faculty_id,
+            feedback: application.feedback,
+            rejectionReason: application.rejection_reason,
             createdAt: application.created_at,
-            updatedAt: application.updated_at
+            updatedAt: application.updated_at,
+            workType: application.work_type,
+            type: application.type
         };
         res.json(applicationResponse);
     }
     catch (err) {
         console.error("Error fetching student application:", err);
-        res.status(500).json({ message: "Database error fetching student application" });
+        res.status(500).json({
+            message: "Database error fetching student application",
+            error: err instanceof Error ? err.message : 'Unknown error'
+        });
     }
 });
 // Middleware для перевірки, чи є користувач викладачем
@@ -4548,14 +5723,145 @@ const requireTeacher = async (req, res, next) => {
         res.status(500).json({ message: "Server error" });
     }
 };
-// GET /api/teacher/applications - отримати заявки для викладача
+// Функція для створення глав проекту
+const createProjectChapters = async (client, application, workType) => {
+    try {
+        const chapters = [];
+        // Визначаємо глави в залежності від типу роботи
+        switch (workType) {
+            case 'coursework':
+                chapters.push({
+                    title: 'Вступ',
+                    description: 'Вступ до курсової роботи. Актуальність теми, мета та завдання дослідження.',
+                    order_number: 1,
+                    status: 'not_started'
+                }, {
+                    title: 'Теоретична частина',
+                    description: 'Аналіз літературних джерел та теоретичні основи дослідження.',
+                    order_number: 2,
+                    status: 'not_started'
+                }, {
+                    title: 'Практична частина',
+                    description: 'Методологія дослідження, експериментальна частина та результати.',
+                    order_number: 3,
+                    status: 'not_started'
+                }, {
+                    title: 'Висновки',
+                    description: 'Висновки, рекомендації та перспективи подальших досліджень.',
+                    order_number: 4,
+                    status: 'not_started'
+                });
+                break;
+            case 'diploma':
+                chapters.push({
+                    title: 'Вступ',
+                    description: 'Вступ до дипломного проекту. Актуальність, мета, об\'єкт та предмет дослідження.',
+                    order_number: 1,
+                    status: 'not_started'
+                }, {
+                    title: 'Аналіз предметної області',
+                    description: 'Аналіз існуючих рішень та літературних джерел.',
+                    order_number: 2,
+                    status: 'not_started'
+                }, {
+                    title: 'Технічне завдання',
+                    description: 'Вимоги до системи, функціональні та нефункціональні вимоги.',
+                    order_number: 3,
+                    status: 'not_started'
+                }, {
+                    title: 'Проектування системи',
+                    description: 'Архітектура системи, проектування бази даних, інтерфейсу.',
+                    order_number: 4,
+                    status: 'not_started'
+                }, {
+                    title: 'Реалізація',
+                    description: 'Технологічний стек, реалізація компонентів системи.',
+                    order_number: 5,
+                    status: 'not_started'
+                }, {
+                    title: 'Тестування',
+                    description: 'Плани тестування, результати тестування, валідація.',
+                    order_number: 6,
+                    status: 'not_started'
+                }, {
+                    title: 'Висновки',
+                    description: 'Висновки, економічне обґрунтування, перспективи розвитку.',
+                    order_number: 7,
+                    status: 'not_started'
+                });
+                break;
+            case 'practice':
+                chapters.push({
+                    title: 'Вступ',
+                    description: 'Вступ до звіту з практики. Місце проходження практики, мета та завдання.',
+                    order_number: 1,
+                    status: 'not_started'
+                }, {
+                    title: 'Опис організації',
+                    description: 'Характеристика підприємства, організаційна структура, основна діяльність.',
+                    order_number: 2,
+                    status: 'not_started'
+                }, {
+                    title: 'Діяльність на практиці',
+                    description: 'Опис виконаних завдань, отриманих навичок, використаних технологій.',
+                    order_number: 3,
+                    status: 'not_started'
+                }, {
+                    title: 'Аналіз результатів',
+                    description: 'Аналіз виконаної роботи, отриманих результатів, труднощів.',
+                    order_number: 4,
+                    status: 'not_started'
+                }, {
+                    title: 'Висновки та пропозиції',
+                    description: 'Висновки з практики, пропозиції щодо покращення.',
+                    order_number: 5,
+                    status: 'not_started'
+                });
+                break;
+        }
+        // Створюємо глави
+        for (const chapter of chapters) {
+            await client.query(`INSERT INTO project_chapters (
+          application_id,
+          title,
+          description,
+          order_number,
+          status,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, [application.id, chapter.title, chapter.description, chapter.order_number, chapter.status]);
+        }
+    }
+    catch (error) {
+        console.error("Error creating project chapters:", error);
+        throw error;
+    }
+};
+// Функція для розрахунку дедлайну
+const calculateDeadline = (workType) => {
+    const date = new Date();
+    switch (workType) {
+        case 'practice':
+            date.setMonth(date.getMonth() + 1);
+            break;
+        case 'coursework':
+            date.setMonth(date.getMonth() + 3);
+            break;
+        case 'diploma':
+            date.setMonth(date.getMonth() + 6);
+            break;
+        default:
+            date.setMonth(date.getMonth() + 3);
+    }
+    return date.toISOString().split('T')[0];
+};
 app.get("/api/teacher/applications", authenticateToken, requireTeacher, async (req, res) => {
     try {
         const teacherId = req.user?.userId;
+        console.log('🔍 Fetching applications for teacher:', teacherId);
         if (!teacherId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-        console.log('🔍 Fetching applications for teacher:', teacherId);
         const result = await pool.query(`SELECT 
         sa.id,
         sa.topic,
@@ -4574,6 +5880,8 @@ app.get("/api/teacher/applications", authenticateToken, requireTeacher, async (r
         sa.updated_at,
         sa.application_date,
         sa.rejection_reason,
+        sa.work_type,   -- ✅ НОВЕ ПОЛЕ
+        sa.type,        -- ✅ НОВЕ ПОЛЕ
         u.name as teacher_name,
         u.email as teacher_email
        FROM student_applications sa
@@ -4592,34 +5900,70 @@ app.get("/api/teacher/applications", authenticateToken, requireTeacher, async (r
                 .toUpperCase()
                 .substring(0, 2);
         };
-        const applications = result.rows.map((row) => ({
-            id: row.id,
-            studentName: row.student_name || 'Студент',
-            studentAvatar: "", // Пустий avatar
-            studentInitials: getInitials(row.student_name),
-            program: row.student_program || 'Не вказано',
-            year: row.student_year || 'Не вказано',
-            topic: row.topic || 'Без назви',
-            type: (row.requirements?.toLowerCase().includes('диплом') ||
-                row.topic?.toLowerCase().includes('диплом') ||
-                row.requirements?.toLowerCase().includes('diploma') ||
-                row.topic?.toLowerCase().includes('diploma')) ? 'diploma' : 'course',
-            status: row.status || 'pending',
-            date: new Date(row.application_date || row.created_at).toLocaleDateString('uk-UA'),
-            email: row.student_email || 'Не вказано',
-            phone: row.student_phone || 'Не вказано',
-            description: row.description || 'Опис відсутній',
-            goals: row.goals || 'Не вказано',
-            requirements: row.requirements || 'Не вказано',
-            deadline: row.deadline,
-            rejectionReason: row.rejection_reason,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            teacherInfo: row.teacher_name ? {
-                name: row.teacher_name,
-                email: row.teacher_email
-            } : null
-        }));
+        // ✅ Функція для визначення типу роботи
+        const determineWorkType = (row) => {
+            // 1. Використовуємо work_type з бази
+            if (row.work_type && ['coursework', 'diploma', 'practice'].includes(row.work_type)) {
+                return row.work_type;
+            }
+            // 2. Використовуємо type з бази для сумісності
+            if (row.type === 'diploma')
+                return 'diploma';
+            if (row.type === 'practice')
+                return 'practice';
+            // 3. Аналізуємо текст для сумісності зі старими заявками
+            const topicLower = row.topic?.toLowerCase() || '';
+            const requirementsLower = row.requirements?.toLowerCase() || '';
+            if (topicLower.includes('диплом') || topicLower.includes('diploma') ||
+                requirementsLower.includes('диплом') || requirementsLower.includes('diploma') ||
+                topicLower.includes('магістер') || requirementsLower.includes('магістер')) {
+                return 'diploma';
+            }
+            if (topicLower.includes('практик') || topicLower.includes('practice') ||
+                topicLower.includes('звіт') || topicLower.includes('report') ||
+                requirementsLower.includes('практик') || requirementsLower.includes('practice')) {
+                return 'practice';
+            }
+            return 'coursework';
+        };
+        const applications = result.rows.map((row) => {
+            const workType = determineWorkType(row); // ✅ Визначаємо тип роботи
+            return {
+                id: row.id,
+                studentName: row.student_name || 'Студент',
+                studentAvatar: "",
+                studentInitials: getInitials(row.student_name),
+                program: row.student_program || 'Не вказано',
+                year: row.student_year || 'Не вказано',
+                topic: row.topic || 'Без назви',
+                workType: workType, // ✅ НОВЕ ПОЛЕ
+                type: workType === 'diploma' ? 'diploma' : workType === 'practice' ? 'practice' : 'course', // Для сумісності
+                status: row.status || 'pending',
+                date: new Date(row.application_date || row.created_at).toLocaleDateString('uk-UA'),
+                email: row.student_email || 'Не вказано',
+                phone: row.student_phone || 'Не вказано',
+                description: row.description || 'Опис відсутній',
+                goals: row.goals || 'Не вказано',
+                requirements: row.requirements || 'Не вказано',
+                deadline: row.deadline,
+                rejectionReason: row.rejection_reason,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at,
+                teacherInfo: row.teacher_name ? {
+                    name: row.teacher_name,
+                    email: row.teacher_email
+                } : null,
+                // ✅ Додаємо інформацію про тип для відображення
+                workTypeInfo: {
+                    label: workType === 'coursework' ? 'Курсова робота' :
+                        workType === 'diploma' ? 'Дипломний проєкт' :
+                            'Звіт з практики',
+                    icon: workType === 'coursework' ? 'book-open' :
+                        workType === 'diploma' ? 'graduation-cap' :
+                            'briefcase'
+                }
+            };
+        });
         res.json(applications);
     }
     catch (err) {
@@ -4630,8 +5974,8 @@ app.get("/api/teacher/applications", authenticateToken, requireTeacher, async (r
         });
     }
 });
-// PATCH /api/teacher/applications/:id/status - оновити статус заявки
 app.patch("/api/teacher/applications/:id/status", authenticateToken, requireTeacher, async (req, res) => {
+    let client;
     try {
         const teacherId = req.user?.userId;
         const applicationId = req.params.id;
@@ -4648,15 +5992,47 @@ app.patch("/api/teacher/applications/:id/status", authenticateToken, requireTeac
         if (!['pending', 'accepted', 'rejected'].includes(status)) {
             return res.status(400).json({ message: "Invalid status" });
         }
-        // Спочатку перевіримо, чи належить заявка цьому викладачу
-        const checkResult = await pool.query('SELECT id FROM student_applications WHERE id = $1 AND teacher_id = $2', [applicationId, teacherId]);
+        // Використовуємо транзакцію для безпеки
+        client = await pool.connect();
+        await client.query('BEGIN');
+        // Спочатку перевіримо заявку та отримаємо деталі
+        const checkResult = await client.query(`SELECT sa.*, u.* 
+       FROM student_applications sa
+       LEFT JOIN users u ON sa.student_id = u.id
+       WHERE sa.id = $1 AND sa.teacher_id = $2`, [applicationId, teacherId]);
         if (checkResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(404).json({
                 message: "Application not found or access denied"
             });
         }
+        const application = checkResult.rows[0];
+        // ✅ Функція для визначення workType
+        const determineWorkType = (app) => {
+            if (app.work_type && ['coursework', 'diploma', 'practice'].includes(app.work_type)) {
+                return app.work_type;
+            }
+            if (app.type === 'diploma')
+                return 'diploma';
+            if (app.type === 'practice')
+                return 'practice';
+            const topicLower = app.topic?.toLowerCase() || '';
+            const requirementsLower = app.requirements?.toLowerCase() || '';
+            if (topicLower.includes('диплом') || topicLower.includes('diploma') ||
+                requirementsLower.includes('диплом') || requirementsLower.includes('diploma')) {
+                return 'diploma';
+            }
+            if (topicLower.includes('практик') || topicLower.includes('practice') ||
+                topicLower.includes('звіт') || topicLower.includes('report')) {
+                return 'practice';
+            }
+            return 'coursework';
+        };
+        const workType = determineWorkType(application);
+        console.log('✅ Determined work type:', workType);
         // Підготовка даних для оновлення
-        let query = `
+        let updateQuery = `
       UPDATE student_applications 
       SET status = $1, 
           updated_at = CURRENT_TIMESTAMP,
@@ -4664,34 +6040,121 @@ app.patch("/api/teacher/applications/:id/status", authenticateToken, requireTeac
           processed_by = $2
     `;
         const queryParams = [status, teacherId, applicationId];
-        let paramCount = 3;
         // Додаємо причину відхилення, якщо статус 'rejected'
         if (status === 'rejected' && rejectionReason) {
-            query += `, rejection_reason = $${paramCount + 1} WHERE id = $3 AND teacher_id = $2`;
+            updateQuery += `, rejection_reason = $4 WHERE id = $3 AND teacher_id = $2`;
             queryParams.push(rejectionReason);
         }
         else if (status === 'accepted') {
             // Якщо заявку приймаємо, очищаємо причину відхилення
-            query += `, rejection_reason = NULL WHERE id = $3 AND teacher_id = $2`;
+            updateQuery += `, rejection_reason = NULL WHERE id = $3 AND teacher_id = $2`;
         }
         else {
-            query += ` WHERE id = $3 AND teacher_id = $2`;
+            updateQuery += ` WHERE id = $3 AND teacher_id = $2`;
         }
-        query += ` RETURNING *`;
-        console.log('📝 Executing query:', query);
+        updateQuery += ` RETURNING *`;
+        console.log('📝 Executing UPDATE query:', updateQuery);
         console.log('📋 Query params:', queryParams);
-        const result = await pool.query(query, queryParams);
-        if (result.rows.length === 0) {
+        const updateResult = await client.query(updateQuery, queryParams);
+        if (updateResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(404).json({ message: "Application not found" });
         }
-        const updatedApplication = result.rows[0];
+        const updatedApplication = updateResult.rows[0];
         console.log('✅ Application updated successfully:', updatedApplication.id);
-        res.json({
+        // ✅ Якщо заявку прийнято, створюємо студента та проект
+        if (status === 'accepted') {
+            try {
+                console.log('🚀 Creating student project for work type:', workType);
+                // 1. Створюємо/оновлюємо запис у teacher_students
+                const studentRecord = {
+                    teacher_id: teacherId,
+                    student_id: application.student_id,
+                    student_name: application.student_name || application.name || 'Студент',
+                    student_email: application.student_email || application.email || '',
+                    student_phone: application.student_phone || application.phone || '',
+                    student_program: application.student_program || application.program || '',
+                    student_year: application.student_year || application.year || '',
+                    work_type: workType,
+                    work_title: application.topic,
+                    start_date: new Date().toISOString().split('T')[0],
+                    deadline: application.deadline || calculateDeadline(workType),
+                    status: 'active',
+                    application_id: applicationId,
+                    confirmed_at: new Date().toISOString(),
+                    supervisor: '' // Буде заповнено пізніше
+                };
+                // Перевіряємо, чи існує вже запис
+                const existingRecord = await client.query(`SELECT id FROM teacher_students WHERE teacher_id = $1 AND student_id = $2`, [teacherId, application.student_id]);
+                let studentResult;
+                if (existingRecord.rows.length > 0) {
+                    // Оновлюємо існуючий запис
+                    studentResult = await client.query(`UPDATE teacher_students 
+             SET work_type = $3, work_title = $4, status = $5, updated_at = CURRENT_TIMESTAMP
+             WHERE teacher_id = $1 AND student_id = $2
+             RETURNING *`, [teacherId, application.student_id, workType, application.topic, 'active']);
+                }
+                else {
+                    // Створюємо новий запис
+                    studentResult = await client.query(`INSERT INTO teacher_students (
+              teacher_id, student_id, student_name, student_email, 
+              student_phone, student_program, student_year,
+              work_type, work_title, start_date, deadline,
+              status, application_id, confirmed_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING *`, [
+                        teacherId,
+                        application.student_id,
+                        studentRecord.student_name,
+                        studentRecord.student_email,
+                        studentRecord.student_phone,
+                        studentRecord.student_program,
+                        studentRecord.student_year,
+                        studentRecord.work_type,
+                        studentRecord.work_title,
+                        studentRecord.start_date,
+                        studentRecord.deadline,
+                        studentRecord.status,
+                        studentRecord.application_id,
+                        studentRecord.confirmed_at
+                    ]);
+                }
+                console.log('✅ Teacher student record created/updated:', studentResult.rows[0].id);
+                // 2. Створюємо глави проекту
+                await createProjectChapters(client, application, workType);
+                console.log('✅ Project chapters created successfully');
+            }
+            catch (projectError) {
+                console.error('❌ Error creating student project:', projectError);
+                // Не відкатуємо всю транзакцію, лише логуємо помилку
+            }
+        }
+        await client.query('COMMIT');
+        const response = {
             success: true,
-            application: updatedApplication
-        });
+            application: updatedApplication,
+            workType: workType, // ✅ Додаємо workType до відповіді
+            message: status === 'accepted'
+                ? `Application accepted. Student project created with type: ${workType}`
+                : 'Application updated'
+        };
+        res.json(response);
     }
     catch (err) {
+        // Відкат транзакції у випадку помилки
+        if (client) {
+            try {
+                await client.query('ROLLBACK');
+                console.log('🔁 Transaction rolled back');
+            }
+            catch (rollbackError) {
+                console.error('❌ Rollback error:', rollbackError);
+            }
+            finally {
+                client.release();
+            }
+        }
         console.error("❌ Error updating application status:", err);
         res.status(500).json({
             message: "Database error updating application status",
@@ -4699,6 +6162,1192 @@ app.patch("/api/teacher/applications/:id/status", authenticateToken, requireTeac
         });
     }
 });
+// GET /api/teacher/places - отримати доступні місця поточного викладача
+app.get("/api/teacher/places", authenticateToken, async (req, res) => {
+    try {
+        // Перевіряємо наявність req.user
+        if (!req.user) {
+            console.log("❌ No user in request");
+            return res.status(401).json({ message: "Користувач не авторизований" });
+        }
+        // Тепер можемо безпечно звертатися до req.user.userId
+        const userId = req.user.userId;
+        console.log(`🔄 Fetching available places for user ID: ${userId}`);
+        // Перевіряємо, чи користувач є викладачем
+        const teacherCheck = await pool.query('SELECT id FROM teachers WHERE id = $1', [userId]);
+        if (teacherCheck.rows.length === 0) {
+            console.log(`❌ User ${userId} is not a teacher`);
+            return res.json([]);
+        }
+        const teacherId = teacherCheck.rows[0].id;
+        console.log(`👨‍🏫 Found teacher ID: ${teacherId} for user ID: ${userId}`);
+        const result = await pool.query(`
+      SELECT 
+        ap.id,
+        ap.type,
+        ap.available_spots,
+        ap.course,
+        ap.specialty_id,
+        s.name as specialty_name,
+        s.code as specialty_code,
+        s.faculty_id,
+        f.name as faculty_name,
+        COALESCE(ap.max_students, 5) as max_students,
+        COALESCE(ap.current_students, 0) as current_students,
+        COALESCE(ap.requirements, '') as requirements,
+        COALESCE(ap.description, '') as description,
+        ap.created_at,
+        ap.updated_at
+      FROM available_places ap
+      LEFT JOIN specialties s ON ap.specialty_id = s.id
+      LEFT JOIN faculties f ON s.faculty_id = f.id
+      WHERE ap.teacher_id = $1
+      ORDER BY 
+        CASE ap.type 
+          WHEN 'coursework' THEN 1 
+          WHEN 'diploma' THEN 2 
+          WHEN 'practice' THEN 3 
+          ELSE 4 
+        END,
+        ap.course,
+        s.code
+    `, [teacherId]);
+        console.log(`✅ Found ${result.rows.length} places for teacher ${teacherId}`);
+        const formattedPlaces = result.rows.map((place) => ({
+            id: place.id.toString(),
+            teacher_id: teacherId,
+            type: place.type,
+            availableSpots: place.available_spots,
+            available_spots: place.available_spots,
+            course: place.course,
+            specialty_id: place.specialty_id,
+            specialty_name: place.specialty_name,
+            specialty_code: place.specialty_code,
+            faculty_id: place.faculty_id,
+            faculty_name: place.faculty_name,
+            max_students: place.max_students,
+            current_students: place.current_students,
+            requirements: place.requirements,
+            description: place.description,
+            created_at: place.created_at,
+            updated_at: place.updated_at,
+            createdAt: place.created_at,
+            updatedAt: place.updated_at
+        }));
+        res.json(formattedPlaces);
+    }
+    catch (err) {
+        console.error("❌ Error fetching teacher places:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({ error: "Failed to fetch available places", details: errorMessage });
+    }
+});
+// POST /api/teacher/places - додати нове доступне місце
+app.post("/api/teacher/places", authenticateToken, async (req, res) => {
+    try {
+        // Перевіряємо наявність req.user
+        if (!req.user) {
+            console.log("❌ No user in request");
+            return res.status(401).json({ message: "Користувач не авторизований" });
+        }
+        const { type, availableSpots, course, specialty_id, max_students, current_students, requirements, description } = req.body;
+        const userId = req.user.userId;
+        console.log("🔄 Adding new available place for user:", userId);
+        // Перевіряємо, чи користувач є викладачем
+        const teacherCheck = await pool.query('SELECT id FROM teachers WHERE id = $1', [userId]);
+        if (teacherCheck.rows.length === 0) {
+            console.log(`❌ User ${userId} is not a teacher`);
+            return res.status(403).json({
+                message: "Користувач не є викладачем"
+            });
+        }
+        const teacherId = teacherCheck.rows[0].id;
+        console.log("📝 Adding new available place:", {
+            teacherId,
+            type,
+            availableSpots,
+            course,
+            specialty_id,
+            max_students,
+            current_students,
+            requirements,
+            description
+        });
+        // Валідація
+        if (!type || !availableSpots || !course || !specialty_id) {
+            return res.status(400).json({
+                message: "Тип, кількість місць, курс та спеціальність обов'язкові"
+            });
+        }
+        // Перевірка, чи існує спеціальність
+        const specialtyCheck = await pool.query('SELECT id, name, code FROM specialties WHERE id = $1', [specialty_id]);
+        if (specialtyCheck.rows.length === 0) {
+            return res.status(400).json({
+                message: "Спеціальність не знайдена"
+            });
+        }
+        // Перевірка, чи не існує вже такого місця
+        const existingPlace = await pool.query(`SELECT id FROM available_places 
+       WHERE teacher_id = $1 AND type = $2 AND course = $3 AND specialty_id = $4`, [teacherId, type, course, specialty_id]);
+        if (existingPlace.rows.length > 0) {
+            return res.status(400).json({
+                message: "Така пропозиція вже існує для цього курсу та спеціальності"
+            });
+        }
+        // Додаємо нове місце
+        const result = await pool.query(`INSERT INTO available_places 
+       (teacher_id, type, available_spots, course, specialty_id, 
+        max_students, current_students, requirements, description, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+       RETURNING *`, [
+            teacherId,
+            type,
+            availableSpots,
+            course,
+            specialty_id,
+            max_students || 5,
+            current_students || 0,
+            requirements || '',
+            description || ''
+        ]);
+        const place = result.rows[0];
+        // Отримуємо додаткову інформацію
+        const specialtyInfo = await pool.query(`SELECT s.name as specialty_name, s.code as specialty_code,
+              f.name as faculty_name, f.id as faculty_id
+       FROM specialties s
+       LEFT JOIN faculties f ON s.faculty_id = f.id
+       WHERE s.id = $1`, [specialty_id]);
+        const formattedPlace = {
+            ...place,
+            id: place.id.toString(),
+            teacher_id: teacherId,
+            specialty_name: specialtyInfo.rows[0]?.specialty_name || 'Невідома спеціальність',
+            specialty_code: specialtyInfo.rows[0]?.specialty_code || 'N/A',
+            faculty_name: specialtyInfo.rows[0]?.faculty_name || 'Невідомий факультет',
+            faculty_id: specialtyInfo.rows[0]?.faculty_id,
+            available_spots: place.available_spots,
+            availableSpots: place.available_spots,
+            created_at: place.created_at,
+            updated_at: place.updated_at,
+            createdAt: place.created_at,
+            updatedAt: place.updated_at
+        };
+        console.log(`✅ Added new place with ID: ${formattedPlace.id}`);
+        res.status(201).json({
+            message: "Місце успішно додано",
+            place: formattedPlace
+        });
+    }
+    catch (err) {
+        console.error("❌ Error adding available place:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({
+            error: "Failed to add available place",
+            details: errorMessage
+        });
+    }
+});
+// PUT /api/teacher/places/update - оновити кількість доступних місць
+app.put("/api/teacher/places/update", authenticateToken, async (req, res) => {
+    try {
+        // Перевіряємо наявність req.user
+        if (!req.user) {
+            console.log("❌ No user in request");
+            return res.status(401).json({ message: "Користувач не авторизований" });
+        }
+        const { teacherId, type, specialty_id, course, action = 'decrement' } = req.body;
+        console.log("🔄 Updating available spots:", {
+            teacherId,
+            type,
+            specialty_id,
+            course,
+            action
+        });
+        // Валідація
+        if (!teacherId || !type || !specialty_id || !course) {
+            return res.status(400).json({
+                message: "Відсутні обов'язкові поля: teacherId, type, specialty_id, course"
+            });
+        }
+        // Знайти місце за параметрами
+        const placeResult = await pool.query(`
+      SELECT 
+        ap.id,
+        ap.available_spots,
+        ap.current_students,
+        ap.max_students
+      FROM available_places ap
+      WHERE ap.teacher_id = $1 
+        AND ap.type = $2 
+        AND ap.specialty_id = $3 
+        AND ap.course = $4
+    `, [teacherId, type, specialty_id, course]);
+        if (placeResult.rows.length === 0) {
+            // Якщо не знайдено точне місце, шукаємо будь-яке місце для цього викладача
+            // з таким типом роботи (без фільтрації за спеціальністю/курсом)
+            const fallbackResult = await pool.query(`
+        SELECT 
+          ap.id,
+          ap.available_spots,
+          ap.current_students,
+          ap.max_students
+        FROM available_places ap
+        WHERE ap.teacher_id = $1 
+          AND ap.type = $2
+        ORDER BY ap.available_spots DESC
+        LIMIT 1
+      `, [teacherId, type]);
+            if (fallbackResult.rows.length === 0) {
+                return res.status(404).json({
+                    message: "Місць для даного типу роботи не знайдено",
+                    details: "Викладач не має доступних місць для цього типу роботи"
+                });
+            }
+            const place = fallbackResult.rows[0];
+            const newAvailableSpots = action === 'decrement'
+                ? Math.max(0, place.available_spots - 1)
+                : place.available_spots + 1;
+            const newCurrentStudents = action === 'decrement'
+                ? Math.min(place.max_students || 5, place.current_students + 1)
+                : Math.max(0, place.current_students - 1);
+            // Оновлюємо перше доступне місце цього типу
+            await pool.query(`
+        UPDATE available_places 
+        SET available_spots = $1,
+            current_students = $2,
+            updated_at = NOW()
+        WHERE id = $3
+      `, [newAvailableSpots, newCurrentStudents, place.id]);
+            console.log(`✅ Updated fallback place ID: ${place.id}, available spots: ${newAvailableSpots}`);
+            return res.json({
+                message: "Кількість місць оновлено (використано перше доступне місце)",
+                place: {
+                    id: place.id,
+                    available_spots: newAvailableSpots,
+                    current_students: newCurrentStudents,
+                    previous_available_spots: place.available_spots,
+                    previous_current_students: place.current_students,
+                    action: action
+                }
+            });
+        }
+        const place = placeResult.rows[0];
+        // Перевіряємо, чи є доступні місця
+        if (action === 'decrement' && place.available_spots <= 0) {
+            return res.status(400).json({
+                message: "Немає доступних місць",
+                details: "Усі місця для цієї пропозиції вже зайняті"
+            });
+        }
+        // Обчислюємо нові значення
+        const newAvailableSpots = action === 'decrement'
+            ? place.available_spots - 1
+            : place.available_spots + 1;
+        const newCurrentStudents = action === 'decrement'
+            ? (place.current_students || 0) + 1
+            : Math.max(0, (place.current_students || 0) - 1);
+        // Оновлюємо місце
+        await pool.query(`
+      UPDATE available_places 
+      SET available_spots = $1,
+          current_students = $2,
+          updated_at = NOW()
+      WHERE id = $3
+    `, [newAvailableSpots, newCurrentStudents, place.id]);
+        console.log(`✅ Updated place ID: ${place.id}, available spots: ${newAvailableSpots}`);
+        res.json({
+            message: "Кількість місць успішно оновлено",
+            place: {
+                id: place.id,
+                available_spots: newAvailableSpots,
+                current_students: newCurrentStudents,
+                previous_available_spots: place.available_spots,
+                previous_current_students: place.current_students,
+                action: action
+            }
+        });
+    }
+    catch (err) {
+        console.error("❌ Error updating available spots:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({
+            error: "Failed to update available spots",
+            details: errorMessage
+        });
+    }
+});
+// PUT /api/teacher/places/:id - оновити доступне місце
+app.put("/api/teacher/places/:id", authenticateToken, async (req, res) => {
+    try {
+        // Перевіряємо наявність req.user
+        if (!req.user) {
+            console.log("❌ No user in request");
+            return res.status(401).json({ message: "Користувач не авторизований" });
+        }
+        const placeId = req.params.id;
+        const { type, availableSpots, course, specialty_id, max_students, current_students, requirements, description } = req.body;
+        const userId = req.user.userId;
+        console.log("🔄 Updating available place for user:", userId);
+        // Перевіряємо, чи користувач є викладачем
+        const teacherCheck = await pool.query('SELECT id FROM teachers WHERE id = $1', [userId]);
+        if (teacherCheck.rows.length === 0) {
+            console.log(`❌ User ${userId} is not a teacher`);
+            return res.status(403).json({
+                message: "Користувач не є викладачем"
+            });
+        }
+        const teacherId = teacherCheck.rows[0].id;
+        console.log("📝 Updating available place:", {
+            placeId,
+            teacherId,
+            type,
+            availableSpots,
+            course,
+            specialty_id,
+            max_students,
+            current_students
+        });
+        // Перевіряємо, чи існує місце та чи належить воно викладачу
+        const existingPlace = await pool.query(`SELECT id FROM available_places WHERE id = $1 AND teacher_id = $2`, [placeId, teacherId]);
+        if (existingPlace.rows.length === 0) {
+            return res.status(404).json({
+                message: "Місце не знайдено або ви не маєте доступу"
+            });
+        }
+        // Перевіряємо, чи не конфліктує оновлення з іншими записами
+        const conflictCheck = await pool.query(`SELECT id FROM available_places 
+       WHERE teacher_id = $1 AND type = $2 AND course = $3 AND specialty_id = $4 AND id != $5`, [teacherId, type, course, specialty_id, placeId]);
+        if (conflictCheck.rows.length > 0) {
+            return res.status(400).json({
+                message: "Така пропозиція вже існує для цього курсу та спеціальності"
+            });
+        }
+        // Оновлюємо місце
+        const result = await pool.query(`UPDATE available_places 
+       SET type = $1, 
+           available_spots = $2, 
+           course = $3, 
+           specialty_id = $4,
+           max_students = $5,
+           current_students = $6,
+           requirements = $7,
+           description = $8,
+           updated_at = NOW()
+       WHERE id = $9 AND teacher_id = $10
+       RETURNING *`, [
+            type,
+            availableSpots,
+            course,
+            specialty_id,
+            max_students || 5,
+            current_students || 0,
+            requirements || '',
+            description || '',
+            placeId,
+            teacherId
+        ]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Місце не знайдено"
+            });
+        }
+        const place = result.rows[0];
+        // Отримуємо додаткову інформацію
+        const specialtyInfo = await pool.query(`SELECT s.name as specialty_name, s.code as specialty_code,
+              f.name as faculty_name, f.id as faculty_id
+       FROM specialties s
+       LEFT JOIN faculties f ON s.faculty_id = f.id
+       WHERE s.id = $1`, [specialty_id]);
+        const formattedPlace = {
+            ...place,
+            id: place.id.toString(),
+            teacher_id: teacherId,
+            specialty_name: specialtyInfo.rows[0]?.specialty_name || 'Невідома спеціальність',
+            specialty_code: specialtyInfo.rows[0]?.specialty_code || 'N/A',
+            faculty_name: specialtyInfo.rows[0]?.faculty_name || 'Невідомий факультет',
+            faculty_id: specialtyInfo.rows[0]?.faculty_id,
+            available_spots: place.available_spots,
+            availableSpots: place.available_spots,
+            created_at: place.created_at,
+            updated_at: place.updated_at,
+            createdAt: place.created_at,
+            updatedAt: place.updated_at
+        };
+        console.log(`✅ Updated place with ID: ${formattedPlace.id}`);
+        res.json({
+            message: "Місце успішно оновлено",
+            place: formattedPlace
+        });
+    }
+    catch (err) {
+        console.error("❌ Error updating available place:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({
+            error: "Failed to update available place",
+            details: errorMessage
+        });
+    }
+});
+// DELETE /api/teacher/places/:id - видалити доступне місце
+app.delete("/api/teacher/places/:id", authenticateToken, async (req, res) => {
+    try {
+        // Перевіряємо наявність req.user
+        if (!req.user) {
+            console.log("❌ No user in request");
+            return res.status(401).json({ message: "Користувач не авторизований" });
+        }
+        const placeId = req.params.id;
+        const userId = req.user.userId;
+        console.log(`🔄 Deleting place ${placeId} for user ${userId}`);
+        // Перевіряємо, чи користувач є викладачем
+        const teacherCheck = await pool.query('SELECT id FROM teachers WHERE id = $1', [userId]);
+        if (teacherCheck.rows.length === 0) {
+            console.log(`❌ User ${userId} is not a teacher`);
+            return res.status(403).json({
+                message: "Користувач не є викладачем"
+            });
+        }
+        const teacherId = teacherCheck.rows[0].id;
+        // Перевіряємо, чи існує місце та чи належить воно викладачу
+        const existingPlace = await pool.query(`SELECT id FROM available_places WHERE id = $1 AND teacher_id = $2`, [placeId, teacherId]);
+        if (existingPlace.rows.length === 0) {
+            return res.status(404).json({
+                message: "Місце не знайдено або ви не маєте доступу"
+            });
+        }
+        // Видаляємо місце
+        const result = await pool.query(`DELETE FROM available_places WHERE id = $1 AND teacher_id = $2 RETURNING id`, [placeId, teacherId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Місце не знайдено"
+            });
+        }
+        console.log(`✅ Deleted place with ID: ${placeId}`);
+        res.json({
+            message: "Місце успішно видалено",
+            deletedId: placeId
+        });
+    }
+    catch (err) {
+        console.error("❌ Error deleting available place:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({
+            error: "Failed to delete available place",
+            details: errorMessage
+        });
+    }
+});
+// GET /api/teacher/:teacherId/available-places - отримати доступні місця конкретного викладача
+app.get("/api/teacher/:teacherId/available-places", authenticateToken, async (req, res) => {
+    try {
+        const { teacherId } = req.params;
+        const { workType, specialtyId, course, includeAll = false } = req.query;
+        console.log(`🔄 Fetching available places for teacher ${teacherId}`);
+        // Перевіряємо, чи користувач існує як викладач
+        const teacherCheck = await pool.query('SELECT id FROM teachers WHERE id = $1', [teacherId]);
+        if (teacherCheck.rows.length === 0) {
+            return res.status(404).json({
+                message: "Викладача не знайдено"
+            });
+        }
+        let query = `
+      SELECT 
+        ap.id,
+        ap.type,
+        ap.available_spots,
+        ap.course,
+        ap.specialty_id,
+        s.name as specialty_name,
+        s.code as specialty_code,
+        s.faculty_id,
+        f.name as faculty_name,
+        COALESCE(ap.max_students, 5) as max_students,
+        COALESCE(ap.current_students, 0) as current_students,
+        ap.requirements,
+        ap.description,
+        ap.created_at,
+        ap.updated_at
+      FROM available_places ap
+      LEFT JOIN specialties s ON ap.specialty_id = s.id
+      LEFT JOIN faculties f ON s.faculty_id = f.id
+      WHERE ap.teacher_id = $1
+    `;
+        const params = [teacherId];
+        let paramIndex = 2;
+        // Додаємо фільтри
+        if (workType) {
+            query += ` AND ap.type = $${paramIndex}`;
+            params.push(workType);
+            paramIndex++;
+        }
+        if (specialtyId) {
+            query += ` AND ap.specialty_id = $${paramIndex}`;
+            params.push(specialtyId);
+            paramIndex++;
+        }
+        if (course) {
+            query += ` AND ap.course = $${paramIndex}`;
+            params.push(course);
+            paramIndex++;
+        }
+        // Фільтр за доступністю
+        if (includeAll === 'false' || includeAll === false) {
+            query += ` AND ap.available_spots > 0`;
+        }
+        query += ` ORDER BY ap.type, ap.course, s.code`;
+        const result = await pool.query(query, params);
+        // Форматуємо результат
+        const formattedPlaces = result.rows.map((place) => ({
+            id: place.id.toString(),
+            teacher_id: parseInt(teacherId),
+            type: place.type,
+            availableSpots: place.available_spots,
+            available_spots: place.available_spots,
+            course: place.course,
+            specialty_id: place.specialty_id,
+            specialty_name: place.specialty_name,
+            specialty_code: place.specialty_code,
+            faculty_id: place.faculty_id,
+            faculty_name: place.faculty_name,
+            max_students: place.max_students,
+            current_students: place.current_students,
+            requirements: place.requirements,
+            description: place.description,
+            created_at: place.created_at,
+            updated_at: place.updated_at,
+            createdAt: place.created_at,
+            updatedAt: place.updated_at
+        }));
+        res.json({
+            teacherId,
+            places: formattedPlaces,
+            total: formattedPlaces.length,
+            availableSpots: formattedPlaces.reduce((sum, place) => sum + place.availableSpots, 0),
+            summary: {
+                coursework: formattedPlaces.filter(p => p.type === 'coursework').length,
+                diploma: formattedPlaces.filter(p => p.type === 'diploma').length,
+                practice: formattedPlaces.filter(p => p.type === 'practice').length
+            }
+        });
+    }
+    catch (err) {
+        console.error("❌ Error fetching available places:", err);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        res.status(500).json({
+            error: "Failed to fetch available places",
+            details: errorMessage
+        });
+    }
+});
+// GET /api/teacher/specialties - отримання спеціальностей викладача
+app.get("/api/teacher/specialties", async (req, res) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+        if (!token) {
+            return res.status(401).json({ message: "No token provided" });
+        }
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const teacherId = decoded.userId;
+        // Отримуємо факультет викладача з таблиці teachers
+        const teacherResult = await pool.query('SELECT department_id FROM teachers WHERE id = $1', [teacherId]);
+        if (teacherResult.rows.length === 0) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+        const departmentId = teacherResult.rows[0].department_id;
+        // Отримуємо факультет викладача
+        const departmentResult = await pool.query('SELECT faculty_id FROM departments WHERE id = $1', [departmentId]);
+        if (departmentResult.rows.length === 0) {
+            return res.status(404).json({ message: "Department not found" });
+        }
+        const facultyId = departmentResult.rows[0].faculty_id;
+        // Отримуємо всі спеціальності цього факультету
+        const specialtiesResult = await pool.query(`
+      SELECT 
+        s.id,
+        s.code,
+        s.name,
+        f.name as faculty_name
+      FROM specialties s
+      LEFT JOIN faculties f ON s.faculty_id = f.id
+      WHERE s.faculty_id = $1
+      ORDER BY s.code
+    `, [facultyId]);
+        res.json(specialtiesResult.rows);
+    }
+    catch (error) {
+        console.error('Error fetching teacher specialties:', error);
+        res.status(500).json({ message: "Database error" });
+    }
+});
+// Отримати всі нотатки поточного користувача
+app.get("/api/notes", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const result = await pool.query(`SELECT 
+        id, title, content, tags, category, is_bookmarked, is_public, 
+        updated_at, word_count, background_color, text_color, images
+       FROM notes 
+       WHERE user_id = $1 
+       ORDER BY updated_at DESC`, [userId]);
+        res.json(result.rows.map(row => ({
+            id: row.id,
+            title: row.title,
+            content: row.content,
+            tags: row.tags || [],
+            category: row.category,
+            isBookmarked: row.is_bookmarked,
+            isPublic: row.is_public,
+            updatedAt: row.updated_at,
+            wordCount: row.word_count,
+            backgroundColor: row.background_color,
+            textColor: row.text_color,
+            images: row.images || []
+        })));
+    }
+    catch (err) {
+        console.error("Error fetching notes:", err);
+        res.status(500).json({ message: "Database error fetching notes" });
+    }
+});
+// Створити нову нотатку
+app.post("/api/notes", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const { title, content, tags, category, isBookmarked, isPublic, backgroundColor, textColor, images } = req.body;
+        if (!title || !content) {
+            return res.status(400).json({ message: "Title and content are required" });
+        }
+        const wordCount = content.replace(/<[^>]*>/g, '').split(/\s+/).filter(word => word.length > 0).length;
+        const result = await pool.query(`INSERT INTO notes (
+        user_id, title, content, tags, category, is_bookmarked, is_public,
+        word_count, background_color, text_color, images
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *`, [
+            userId,
+            title,
+            content,
+            tags || [],
+            category || 'personal',
+            isBookmarked || false,
+            isPublic || false,
+            wordCount,
+            backgroundColor || '#ffffff',
+            textColor || '#000000',
+            images || []
+        ]);
+        const note = result.rows[0];
+        res.status(201).json({
+            id: note.id,
+            title: note.title,
+            content: note.content,
+            tags: note.tags || [],
+            category: note.category,
+            isBookmarked: note.is_bookmarked,
+            isPublic: note.is_public,
+            updatedAt: note.updated_at,
+            wordCount: note.word_count,
+            backgroundColor: note.background_color,
+            textColor: note.text_color,
+            images: note.images || []
+        });
+    }
+    catch (err) {
+        console.error("Error creating note:", err);
+        res.status(500).json({ message: "Database error creating note" });
+    }
+});
+// Оновити нотатку
+app.put("/api/notes/:id", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const noteId = req.params.id;
+        const { title, content, tags, category, isBookmarked, isPublic, backgroundColor, textColor, images } = req.body;
+        if (!title || !content) {
+            return res.status(400).json({ message: "Title and content are required" });
+        }
+        // Перевіряємо, чи нотатка належить користувачу
+        const ownershipCheck = await pool.query("SELECT id FROM notes WHERE id = $1 AND user_id = $2", [noteId, userId]);
+        if (ownershipCheck.rows.length === 0) {
+            return res.status(404).json({ message: "Note not found or access denied" });
+        }
+        const wordCount = content.replace(/<[^>]*>/g, '').split(/\s+/).filter(word => word.length > 0).length;
+        const result = await pool.query(`UPDATE notes SET 
+        title = $1, content = $2, tags = $3, category = $4, 
+        is_bookmarked = $5, is_public = $6, updated_at = CURRENT_TIMESTAMP,
+        word_count = $7, background_color = $8, text_color = $9, images = $10
+       WHERE id = $11 AND user_id = $12
+       RETURNING *`, [
+            title,
+            content,
+            tags || [],
+            category || 'personal',
+            isBookmarked || false,
+            isPublic || false,
+            wordCount,
+            backgroundColor || '#ffffff',
+            textColor || '#000000',
+            images || [],
+            noteId,
+            userId
+        ]);
+        const note = result.rows[0];
+        res.json({
+            id: note.id,
+            title: note.title,
+            content: note.content,
+            tags: note.tags || [],
+            category: note.category,
+            isBookmarked: note.is_bookmarked,
+            isPublic: note.is_public,
+            updatedAt: note.updated_at,
+            wordCount: note.word_count,
+            backgroundColor: note.background_color,
+            textColor: note.text_color,
+            images: note.images || []
+        });
+    }
+    catch (err) {
+        console.error("Error updating note:", err);
+        res.status(500).json({ message: "Database error updating note" });
+    }
+});
+// Видалити нотатку
+app.delete("/api/notes/:id", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const noteId = req.params.id;
+        // Перевіряємо, чи нотатка належить користувачу
+        const ownershipCheck = await pool.query("SELECT id FROM notes WHERE id = $1 AND user_id = $2", [noteId, userId]);
+        if (ownershipCheck.rows.length === 0) {
+            return res.status(404).json({ message: "Note not found or access denied" });
+        }
+        await pool.query("DELETE FROM notes WHERE id = $1 AND user_id = $2", [noteId, userId]);
+        res.json({ message: "Note deleted successfully" });
+    }
+    catch (err) {
+        console.error("Error deleting note:", err);
+        res.status(500).json({ message: "Database error deleting note" });
+    }
+});
+// Оновити статус закладки
+app.patch("/api/notes/:id/bookmark", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const noteId = req.params.id;
+        const { isBookmarked } = req.body;
+        const ownershipCheck = await pool.query("SELECT id FROM notes WHERE id = $1 AND user_id = $2", [noteId, userId]);
+        if (ownershipCheck.rows.length === 0) {
+            return res.status(404).json({ message: "Note not found or access denied" });
+        }
+        const result = await pool.query("UPDATE notes SET is_bookmarked = $1 WHERE id = $2 AND user_id = $3 RETURNING *", [isBookmarked, noteId, userId]);
+        const note = result.rows[0];
+        res.json({
+            id: note.id,
+            isBookmarked: note.is_bookmarked
+        });
+    }
+    catch (err) {
+        console.error("Error updating bookmark:", err);
+        res.status(500).json({ message: "Database error updating bookmark" });
+    }
+});
+// Оновити статус публічності
+app.patch("/api/notes/:id/visibility", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const noteId = req.params.id;
+        const { isPublic } = req.body;
+        const ownershipCheck = await pool.query("SELECT id FROM notes WHERE id = $1 AND user_id = $2", [noteId, userId]);
+        if (ownershipCheck.rows.length === 0) {
+            return res.status(404).json({ message: "Note not found or access denied" });
+        }
+        const result = await pool.query("UPDATE notes SET is_public = $1 WHERE id = $2 AND user_id = $3 RETURNING *", [isPublic, noteId, userId]);
+        const note = result.rows[0];
+        res.json({
+            id: note.id,
+            isPublic: note.is_public
+        });
+    }
+    catch (err) {
+        console.error("Error updating visibility:", err);
+        res.status(500).json({ message: "Database error updating visibility" });
+    }
+});
+// Оновити порядок нотаток
+app.put("/api/notes/order", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const { noteOrder } = req.body;
+        if (!noteOrder || !Array.isArray(noteOrder)) {
+            return res.status(400).json({ message: "Note order array is required" });
+        }
+        // Оновлюємо порядок для кожної нотатки
+        for (let i = 0; i < noteOrder.length; i++) {
+            await pool.query("UPDATE notes SET display_order = $1 WHERE id = $2 AND user_id = $3", [i, noteOrder[i], userId]);
+        }
+        res.json({ message: "Note order updated successfully" });
+    }
+    catch (err) {
+        console.error("Error updating note order:", err);
+        res.status(500).json({ message: "Database error updating note order" });
+    }
+});
+// GET /api/analytics/student/progress - отримати прогрес студента
+app.get("/api/analytics/student/progress", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Отримуємо розділи студента
+        const projectResult = await pool.query('SELECT active_project_type FROM user_projects WHERE user_id = $1', [userId]);
+        const projectType = projectResult.rows[0]?.active_project_type || 'coursework';
+        const chaptersResult = await pool.query(`SELECT 
+        chapter_key as key,
+        progress,
+        status,
+        student_note,
+        uploaded_file_name,
+        uploaded_file_date,
+        uploaded_file_size
+       FROM user_chapters 
+       WHERE user_id = $1 AND project_type = $2
+       ORDER BY 
+         CASE chapter_key 
+           WHEN 'intro' THEN 1
+           WHEN 'theory' THEN 2  
+           WHEN 'design' THEN 3
+           WHEN 'implementation' THEN 4
+           WHEN 'tasks' THEN 2
+           WHEN 'diary' THEN 3
+           WHEN 'conclusion' THEN 5
+           WHEN 'report' THEN 6
+           WHEN 'appendix' THEN 7
+           WHEN 'sources' THEN 8
+           WHEN 'abstract' THEN 9
+           WHEN 'cover' THEN 10
+           WHEN 'content' THEN 11
+           ELSE 99 
+         END`, [userId, projectType]);
+        const chapters = chaptersResult.rows.map((row) => ({
+            id: row.id,
+            key: row.key,
+            progress: row.progress,
+            status: row.status,
+            studentNote: row.student_note || '',
+            uploadedFile: row.uploaded_file_name ? {
+                name: row.uploaded_file_name,
+                uploadDate: row.uploaded_file_date ? new Date(row.uploaded_file_date).toLocaleDateString('uk-UA') : '',
+                size: row.uploaded_file_size || ''
+            } : undefined
+        }));
+        // Розраховуємо загальний прогрес
+        const overallProgress = chapters.length > 0
+            ? Math.round(chapters.reduce((sum, ch) => sum + ch.progress, 0) / chapters.length)
+            : 0;
+        // Отримуємо коментарі викладача
+        const feedbackResult = await pool.query(`SELECT 
+        tc.id,
+        tc.chapter_id,
+        tc.text as comment,
+        tc.created_at as date,
+        tc.type,
+        tc.status,
+        u.name as supervisor_name
+       FROM teacher_comments tc
+       JOIN users u ON tc.teacher_id = u.id
+       WHERE tc.chapter_id IN (
+         SELECT id FROM user_chapters WHERE user_id = $1
+       )
+       ORDER BY tc.created_at DESC`, [userId]);
+        const feedback = feedbackResult.rows.map((row) => ({
+            chapter: row.chapter_id,
+            comment: row.text,
+            date: new Date(row.date).toLocaleDateString('uk-UA'),
+            type: row.type,
+            status: row.status,
+            supervisorName: row.supervisor_name
+        }));
+        // Отримуємо метрики якості
+        const qualityResult = await pool.query(`SELECT 
+        AVG(CASE WHEN progress >= 80 THEN 90 WHEN progress >= 50 THEN 75 ELSE 60 END) as structure_score,
+        AVG(CASE WHEN uploaded_file_name IS NOT NULL THEN 85 ELSE 70 END) as content_score,
+        AVG(CASE WHEN student_note IS NOT NULL THEN 80 ELSE 65 END) as formatting_score,
+        AVG(progress) as citation_score
+       FROM user_chapters 
+       WHERE user_id = $1`, [userId]);
+        const qualityRow = qualityResult.rows[0];
+        res.json({
+            chapters,
+            overallProgress,
+            feedback,
+            qualityMetrics: {
+                structureScore: Math.round(qualityRow.structure_score || 75),
+                contentScore: Math.round(qualityRow.content_score || 70),
+                formattingScore: Math.round(qualityRow.formatting_score || 65),
+                citationScore: Math.round(qualityRow.citation_score || 70)
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error fetching student progress:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/analytics/student/activity - активність студента
+app.get("/api/analytics/student/activity", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Отримуємо сесії активності за останні 14 днів
+        const sessionsResult = await pool.query(`SELECT 
+        start_time,
+        end_time,
+        duration,
+        activity_type,
+        chapters_worked,
+        focus_score,
+        time_of_day
+       FROM student_activity_sessions 
+       WHERE user_id = $1 AND start_time >= NOW() - INTERVAL '14 days'
+       ORDER BY start_time DESC`, [userId]);
+        const studySessions = sessionsResult.rows.map((row) => ({
+            date: new Date(row.start_time).toISOString(),
+            duration: row.duration || 0,
+            activity: row.activity_type || 'writing',
+            chapters: row.chapters_worked || [],
+            focusScore: row.focus_score || 70,
+            timeOfDay: row.time_of_day || 'afternoon'
+        }));
+        // Отримуємо дедлайни
+        const deadlinesResult = await pool.query(`SELECT 
+        milestone,
+        deadline_date,
+        status,
+        priority,
+        submitted_at
+       FROM student_deadlines 
+       WHERE user_id = $1 AND deadline_date >= CURRENT_DATE
+       ORDER BY deadline_date ASC`, [userId]);
+        const deadlines = deadlinesResult.rows.map((row) => {
+            const deadlineDate = new Date(row.deadline_date);
+            const today = new Date();
+            const daysUntil = Math.ceil((deadlineDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            return {
+                milestone: row.milestone,
+                deadline: deadlineDate.toISOString(),
+                status: row.status,
+                submitted: row.submitted_at ? new Date(row.submitted_at).toISOString() : undefined,
+                priority: row.priority,
+                daysUntil: Math.max(0, daysUntil)
+            };
+        });
+        // Аналітика часу
+        const timeAnalyticsResult = await pool.query(`SELECT 
+        EXTRACT(HOUR FROM start_time) as hour,
+        COUNT(*) as sessions,
+        AVG(focus_score) as productivity
+       FROM student_activity_sessions 
+       WHERE user_id = $1 AND start_time >= NOW() - INTERVAL '30 days'
+       GROUP BY EXTRACT(HOUR FROM start_time)
+       ORDER BY hour`, [userId]);
+        const timeAnalytics = timeAnalyticsResult.rows.map((row) => ({
+            hour: `${Math.floor(row.hour)}:00`,
+            sessions: parseInt(row.sessions),
+            productivity: Math.round(row.productivity || 70)
+        }));
+        // Остання активність
+        const lastActivityResult = await pool.query(`SELECT 
+        MAX(start_time) as last_session,
+        MAX(uploaded_file_date) as last_edit
+       FROM user_chapters 
+       WHERE user_id = $1`, [userId]);
+        const lastActivityRow = lastActivityResult.rows[0];
+        res.json({
+            sessions: studySessions,
+            deadlines,
+            recentActivity: {
+                lastLogin: lastActivityRow.last_session ? new Date(lastActivityRow.last_session).toISOString() : new Date().toISOString(),
+                lastEdit: lastActivityRow.last_edit ? new Date(lastActivityRow.last_edit).toISOString() : new Date().toISOString()
+            },
+            timeAnalytics: {
+                productiveHours: timeAnalytics.slice().sort((a, b) => b.productivity - a.productivity).slice(0, 3).map((item) => item.hour),
+                weeklyStreak: Math.floor(Math.random() * 7) + 1, // Тимчасово, поки не реалізуємо стрік
+                averageSessionLength: sessionsResult.rows.length > 0
+                    ? Math.round(sessionsResult.rows.reduce((sum, row) => sum + (row.duration || 0), 0) / sessionsResult.rows.length / 60)
+                    : 45,
+                focusScore: sessionsResult.rows.length > 0
+                    ? Math.round(sessionsResult.rows.reduce((sum, row) => sum + (row.focus_score || 0), 0) / sessionsResult.rows.length)
+                    : 75,
+                bestTimeOfDay: timeAnalytics.length > 0
+                    ? timeAnalytics.reduce((prev, current) => (prev.productivity > current.productivity) ? prev : current).hour
+                    : 'afternoon'
+            }
+        });
+    }
+    catch (err) {
+        console.error('Error fetching student activity:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/analytics/student/writing-stats - статистика написання
+app.get("/api/analytics/student/writing-stats", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Отримуємо статистику написання
+        const writingStatsResult = await pool.query(`SELECT 
+        SUM(word_count) as total_words,
+        SUM(characters_count) as total_characters,
+        SUM(images_count) as total_images,
+        SUM(time_spent) as total_time
+       FROM writing_statistics 
+       WHERE user_id = $1`, [userId]);
+        const statsRow = writingStatsResult.rows[0];
+        const totalPages = Math.round((statsRow.total_words || 0) / 250); // ~250 слів на сторінку
+        res.json({
+            wordCount: statsRow.total_words || 0,
+            pagesCount: totalPages,
+            imagesCount: statsRow.total_images || 0,
+            citationsCount: Math.round((statsRow.total_words || 0) / 500), // ~1 цитата на 500 слів
+            plagiarismScore: 2, // Тимчасово, поки не інтегруємо антиплагіат
+            readabilityScore: 75, // Тимчасово
+            vocabularyDiversity: 68 // Тимчасово
+        });
+    }
+    catch (err) {
+        console.error('Error fetching writing stats:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/analytics/activity/start - початок сесії активності
+app.post("/api/analytics/activity/start", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        const { activityType = 'writing', chapters = [] } = req.body;
+        const result = await pool.query(`INSERT INTO student_activity_sessions 
+       (user_id, activity_type, chapters_worked, time_of_day) 
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`, [userId, activityType, chapters, getTimeOfDay()]);
+        // Зберігаємо ID сесії в сесії користувача
+        req.session.activitySessionId = result.rows[0].id;
+        res.json({
+            success: true,
+            sessionId: result.rows[0].id
+        });
+    }
+    catch (err) {
+        console.error('Error starting activity session:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// POST /api/analytics/activity/end - завершення сесії активності
+app.post("/api/analytics/activity/end", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user?.userId;
+        const sessionId = req.session.activitySessionId;
+        if (!userId || !sessionId) {
+            return res.status(400).json({ message: "No active session" });
+        }
+        const { focusScore = 70, wordsWritten = 0, chapters = [] } = req.body;
+        // Оновлюємо сесію
+        await pool.query(`UPDATE student_activity_sessions 
+       SET end_time = NOW(), 
+           duration = EXTRACT(EPOCH FROM (NOW() - start_time)),
+           focus_score = $1
+       WHERE id = $2 AND user_id = $3`, [focusScore, sessionId, userId]);
+        // Додаємо статистику написання
+        if (wordsWritten > 0) {
+            await pool.query(`INSERT INTO writing_statistics 
+         (user_id, chapter_key, word_count, characters_count, time_spent) 
+         VALUES ($1, $2, $3, $4, $5)`, [userId, chapters[0] || 'general', wordsWritten, wordsWritten * 6, 3600] // Припускаємо 1 годину
+            );
+        }
+        // Очищаємо сесію
+        delete req.session.activitySessionId;
+        res.json({ success: true });
+    }
+    catch (err) {
+        console.error('Error ending activity session:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// GET /api/analytics/supervisor/students-progress - прогрес студентів для викладача
+app.get("/api/analytics/supervisor/students-progress", authenticateToken, requireTeacher, async (req, res) => {
+    try {
+        const teacherId = req.user?.userId;
+        if (!teacherId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        // Отримуємо студентів викладача
+        const studentsResult = await pool.query(`SELECT 
+        u.id,
+        u.name,
+        u.email,
+        d.name as department_name,
+        f.name as faculty_name
+       FROM users u
+       LEFT JOIN departments d ON u.department_id = d.id
+       LEFT JOIN faculties f ON u.faculty_id = f.id
+       WHERE u.role = 'student'
+       AND u.id IN (
+         SELECT student_id FROM teacher_students WHERE teacher_id = $1
+       )`, [teacherId]);
+        const students = await Promise.all(studentsResult.rows.map(async (student) => {
+            // Отримуємо прогрес кожного студента
+            const progressResult = await pool.query(`SELECT 
+            AVG(progress) as avg_progress,
+            COUNT(*) as total_chapters,
+            COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_chapters,
+            COUNT(CASE WHEN uploaded_file_name IS NOT NULL THEN 1 END) as uploaded_files
+           FROM user_chapters 
+           WHERE user_id = $1`, [student.id]);
+            const progressRow = progressResult.rows[0];
+            // Остання активність
+            const activityResult = await pool.query(`SELECT MAX(start_time) as last_activity 
+           FROM student_activity_sessions 
+           WHERE user_id = $1`, [student.id]);
+            return {
+                id: student.id.toString(),
+                name: student.name,
+                group: student.department_name || 'Не вказано',
+                email: student.email,
+                progress: Math.round(progressRow.avg_progress || 0),
+                completedChapters: parseInt(progressRow.completed_chapters || 0),
+                uploadedFiles: parseInt(progressRow.uploaded_files || 0),
+                lastActivity: activityResult.rows[0]?.last_activity || new Date().toISOString(),
+                faculty_name: student.faculty_name,
+                department_name: student.department_name
+            };
+        }));
+        res.json({
+            students,
+            totalStudents: students.length
+        });
+    }
+    catch (err) {
+        console.error('Error fetching students progress:', err);
+        res.status(500).json({ message: 'Database error' });
+    }
+});
+// Допоміжна функція для визначення часу доби
+function getTimeOfDay() {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12)
+        return 'morning';
+    if (hour >= 12 && hour < 17)
+        return 'afternoon';
+    if (hour >= 17 && hour < 22)
+        return 'evening';
+    return 'night';
+}
 // ===== Serve frontend =====
 const frontendPath = path.join(__dirname, "../dist");
 if (fs.existsSync(frontendPath)) {

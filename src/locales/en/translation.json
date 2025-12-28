@@ -22,6 +22,7 @@
     "tasks": "Chat",
     "calendar": "Calendar",
     "workspace": "Workspace",
+    "teachers": "Teachers",
     "aiAssistant": "AI Assistant",
     "analytics": "Analytics",
     "resources": "Resources",
@@ -907,7 +908,9 @@
       "personalInfo": "Personal Information",
       "works": "Works and Publications",
       "researchDirections": "Research Directions",
-      "futureTopics": "Future Research Topics"
+      "futureTopics": "Future Research Topics",
+      "availablePlaces": "Available Places",
+      "availablePlacesHint": "Manage available spots for coursework and diploma projects"
     },
     "fields": {
       "name": "Name",
@@ -927,7 +930,16 @@
       "topic": "Research Topic",
       "fileLink": "File Link",
       "publicationLink": "Publication Link",
-      "notSpecified": "Not specified"
+      "notSpecified": "Not specified",
+       "availablePlaces": "Available Places",
+      "coursework": "Coursework",
+      "diploma": "Diploma Project",
+      "spots": "spots",
+      "course": "Course",
+      "specialty": "Specialty",
+      "specialtyCode": "Specialty Code",
+      "specialtyName": "Specialty Name",
+      "availableSpots": "Available Spots"
     },
     "actions": {
       "edit": "Edit",
@@ -938,7 +950,10 @@
       "addWork": "Add Work",
       "addDirection": "Add Direction",
       "addTopic": "Add Topic",
-      "editInfo": "Edit Information"
+      "editInfo": "Edit Information",
+      "addPlace": "Add Place",
+      "editPlace": "Edit Place",
+      "deletePlace": "Delete Place"
     },
     "placeholders": {
       "title": "PhD, Professor",
@@ -955,7 +970,11 @@
       "topicName": "For example: Quantum Computing in AI",
       "topicDescription": "Describe the topic and research plans...",
       "fileLink": "https://...",
-      "publicationLink": "https://..."
+      "publicationLink": "https://...",
+      "course": "Select course",
+      "specialty": "Select specialty",
+      "spots": "Number of spots",
+      "workType": "Select work type"
     },
     "dialogs": {
       "editInfo": {
@@ -983,6 +1002,18 @@
       "delete": {
         "title": "Are you sure?",
         "description": "This action cannot be undone. This will delete the item permanently."
+      },
+      "addPlace": {
+        "title": "Add Available Place",
+        "description": "Create a new spot for coursework or diploma projects"
+      },
+      "editPlace": {
+        "title": "Edit Place",
+        "description": "Modify information about available spot"
+      },
+      "deletePlace": {
+        "title": "Delete Place?",
+        "description": "This action will permanently delete this spot. Students will no longer be able to see it in the available places list."
       }
     },
     "empty": {
@@ -1000,6 +1031,11 @@
         "title": "No topics yet",
         "description": "Add topics for future research",
         "hint": "Add topics for future research"
+      },
+      "places": {
+        "title": "No Available Places",
+        "description": "No spots for coursework or diploma projects have been added yet",
+        "hint": "Create your first available spot so students can see it and apply"
       }
     },
     "alerts": {
@@ -1023,11 +1059,24 @@
       "directionUpdateError": "Error updating direction",
       "topicAddError": "Error adding topic",
       "topicUpdateError": "Error updating topic",
-      "deleteError": "Error deleting"
+      "deleteError": "Error deleting",
+      "placeAdded": "Place successfully added",
+      "placeUpdated": "Place successfully updated",
+      "placeDeleted": "Place successfully deleted",
+      "placeAddError": "Error adding place",
+      "placeUpdateError": "Error updating place",
+      "placeDeleteError": "Error deleting place"
     },
     "links": {
       "file": "📄 File",
       "publication": "🌐 Publication"
+    },
+    "validation": {
+      "spotsRequired": "Number of spots is required",
+      "spotsPositive": "Number of spots must be greater than 0",
+      "courseRequired": "Course selection is required",
+      "specialtyRequired": "Specialty selection is required",
+      "workTypeRequired": "Work type selection is required"
     }
   }
 }

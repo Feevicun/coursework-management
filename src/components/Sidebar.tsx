@@ -1,4 +1,3 @@
-// Sidebar.tsx
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -19,6 +18,7 @@ import {
   Users,
   GraduationCap,
   FolderOpen,
+  UserCircle, // Додано для іконки викладачів
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -117,13 +117,28 @@ const Sidebar = () => {
     { title: t('sidebar.calendar'), href: '/calendar', icon: Calendar }
   ];
 
-  // Спільні інструменти
-  const toolsItems: MenuItemType[] = [
+  // Спільні інструменти для всіх
+  const commonToolsItems: MenuItemType[] = [
     { title: t('sidebar.workspace'), href: '/notespage', icon: FolderOpen, badge: null },
     { title: t('sidebar.aiAssistant'), href: '/ai-assistant', icon: Zap, badge: 'BETA' },
     { title: t('sidebar.analytics'), href: '/analytics', icon: TrendingUp, badge: null },
     { title: t('sidebar.resources'), href: '/resources', icon: Book, badge: null }
   ];
+
+// Додаткові інструменти тільки для студентів
+const studentToolsItems: MenuItemType[] = [
+  { title: t('sidebar.teachers'), href: '/teachers', icon: UserCircle, badge: null },
+];
+
+  // Формуємо повний список інструментів в залежності від ролі
+  const getToolsItems = () => {
+    if (userRole === 'student') {
+      return [...commonToolsItems, ...studentToolsItems];
+    }
+    return commonToolsItems;
+  };
+
+  const toolsItems = getToolsItems();
 
   // Вибір відповідного меню в залежності від ролі
   const mainMenuItems = userRole === 'teacher' ? teacherMenuItems : studentMenuItems;
@@ -196,7 +211,7 @@ const Sidebar = () => {
 
           <Separator />
 
-          {/* Інструменти (спільні для всіх) */}
+          {/* Інструменти (спільні для всіх + додаткові для студентів) */}
           <div className="space-y-2">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 mb-3">
               {t('sidebar.sectionTools')}

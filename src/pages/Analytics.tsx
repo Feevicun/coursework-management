@@ -83,6 +83,8 @@ interface ChapterProgress {
   wordCount?: number;
   imagesCount?: number;
   timeSpent?: number;
+  studentGrade?: number;
+  teacherComments?: any[];
 }
 
 interface StudySession {
@@ -129,6 +131,8 @@ interface Student {
   citationsCount?: number;
   qualityScore?: number;
   streak?: number;
+  faculty_name?: string;
+  department_name?: string;
 }
 
 interface AnalyticsData {
@@ -251,6 +255,8 @@ interface UserInfo {
   name: string;
   group?: string;
   avatar?: string;
+  faculty_name?: string;
+  department_name?: string;
 }
 
 interface ApiUserResponse {
@@ -280,7 +286,7 @@ interface StudentCategory {
   icon: React.ReactNode;
 }
 
-// API service functions
+// Real API service functions
 const apiService = {
   async getChapters(projectType: string): Promise<ChapterProgress[]> {
     try {
@@ -300,75 +306,30 @@ const apiService = {
       return data;
     } catch (error) {
       console.error('Error fetching chapters:', error);
-      // Return fallback data for demo
-      return [
-        {
-          id: 1,
-          key: 'intro',
-          progress: 80,
-          status: 'completed',
-          studentNote: 'Вступ завершено',
-          uploadedFile: {
-            name: 'introduction.docx',
-            uploadDate: new Date().toISOString(),
-            size: '2.4 MB',
-            type: 'docx'
-          },
-          wordCount: 1500,
-          imagesCount: 2,
-          timeSpent: 360
-        },
-        {
-          id: 2,
-          key: 'theory',
-          progress: 60,
-          status: 'in_progress',
-          studentNote: 'Потрібно додати більше джерел',
-          wordCount: 2800,
-          imagesCount: 3,
-          timeSpent: 420
-        },
-        {
-          id: 3,
-          key: 'design',
-          progress: 30,
-          status: 'in_progress',
-          wordCount: 1200,
-          timeSpent: 180
-        },
-        {
-          id: 4,
-          key: 'implementation',
-          progress: 10,
-          status: 'pending'
-        },
-        {
-          id: 5,
-          key: 'conclusion',
-          progress: 0,
-          status: 'pending'
-        }
-      ];
+      throw error;
     }
   },
 
   async getStudySessions(): Promise<StudySession[]> {
-    // Generate demo study sessions
-    return Array.from({ length: 14 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const timesOfDay: ('morning' | 'afternoon' | 'evening' | 'night')[] = 
-        ['morning', 'afternoon', 'evening', 'night'];
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/analytics/student/activity', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       
-      return {
-        date: date.toISOString(),
-        duration: Math.floor(Math.random() * 120) + 30,
-        activity: 'writing',
-        chapters: ['intro', 'theory'],
-        focusScore: Math.random() * 40 + 60, // 60-100
-        timeOfDay: timesOfDay[Math.floor(Math.random() * timesOfDay.length)]
-      };
-    });
+      if (!response.ok) {
+        throw new Error('Failed to fetch study sessions');
+      }
+      
+      const data = await response.json();
+      return data.sessions || [];
+    } catch (error) {
+      console.error('Error fetching study sessions:', error);
+      return [];
+    }
   },
 
   async getProjectType(): Promise<string> {
@@ -382,7 +343,7 @@ const apiService = {
       });
       
       if (!response.ok) {
-        throw new Error('Failed to fetch project type');
+        return 'coursework';
       }
       
       const data = await response.json();
@@ -411,22 +372,20 @@ const apiService = {
       return {
         role: data.user.role,
         name: `${data.user.firstName} ${data.user.lastName}`,
-        group: data.user.department_name
+        group: data.user.department_name,
+        faculty_name: data.user.faculty_name,
+        department_name: data.user.department_name
       };
     } catch (error) {
       console.error('Error fetching user data:', error);
-      return {
-        role: 'student',
-        name: 'Тестовий Студент',
-        group: 'КН-401'
-      };
+      throw error;
     }
   },
 
   async getSupervisorStudents(): Promise<Student[]> {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/teacher/students', {
+      const response = await fetch('/api/analytics/supervisor/students-progress', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -434,106 +393,21 @@ const apiService = {
       });
       
       if (!response.ok) {
-        return this.getDemoStudents();
+        throw new Error('Failed to fetch students');
       }
       
       const data = await response.json();
-      return data.students || this.getDemoStudents();
+      return data.students || [];
     } catch (error) {
       console.error('Error fetching students data:', error);
-      return this.getDemoStudents();
+      throw error;
     }
-  },
-
-  getDemoStudents(): Student[] {
-    return [
-      {
-        id: '1',
-        name: 'Іван Петренко',
-        group: 'КН-401',
-        email: 'ivan@example.com',
-        progress: 75,
-        completedChapters: 5,
-        uploadedFiles: 3,
-        lastActivity: new Date().toISOString(),
-        startDate: '2024-01-15',
-        estimatedCompletion: '2024-05-30',
-        wordCount: 12500,
-        citationsCount: 15,
-        qualityScore: 85,
-        streak: 7
-      },
-      {
-        id: '2', 
-        name: 'Марія Коваль',
-        group: 'КН-401',
-        email: 'maria@example.com',
-        progress: 45,
-        completedChapters: 3,
-        uploadedFiles: 2,
-        lastActivity: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-        startDate: '2024-01-15',
-        estimatedCompletion: '2024-06-15',
-        wordCount: 8500,
-        citationsCount: 8,
-        qualityScore: 72,
-        streak: 3
-      },
-      {
-        id: '3',
-        name: 'Олександр Шевченко',
-        group: 'КН-401',
-        email: 'olexandr@example.com',
-        progress: 90,
-        completedChapters: 7,
-        uploadedFiles: 5,
-        lastActivity: new Date().toISOString(),
-        startDate: '2024-01-15',
-        estimatedCompletion: '2024-05-20',
-        wordCount: 18500,
-        citationsCount: 22,
-        qualityScore: 92,
-        streak: 14
-      },
-      {
-        id: '4',
-        name: 'Анна Мельник',
-        group: 'КН-401',
-        email: 'anna@example.com',
-        progress: 25,
-        completedChapters: 2,
-        uploadedFiles: 1,
-        lastActivity: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        startDate: '2024-01-15',
-        estimatedCompletion: '2024-06-30',
-        wordCount: 4500,
-        citationsCount: 5,
-        qualityScore: 65,
-        streak: 0
-      },
-      {
-        id: '5',
-        name: 'Дмитро Бондаренко',
-        group: 'КН-401',
-        email: 'dmitro@example.com',
-        progress: 60,
-        completedChapters: 4,
-        uploadedFiles: 3,
-        lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-        startDate: '2024-01-15',
-        estimatedCompletion: '2024-06-10',
-        wordCount: 11000,
-        citationsCount: 12,
-        qualityScore: 78,
-        streak: 5
-      }
-    ];
   },
 
   async getStudentProgress(studentId: string): Promise<AnalyticsData> {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/supervisor/student-progress/${studentId}`, {
+      const response = await fetch(`/api/thesis-tracker/student/${studentId}/chapters`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -541,63 +415,164 @@ const apiService = {
       });
       
       if (!response.ok) {
-        return this.getDemoStudentProgress();
+        throw new Error('Failed to fetch student progress');
       }
       
-      return await response.json();
+      const data = await response.json();
+      const chapters = data.chapters || [];
+      const overallProgress = chapters.length > 0 
+        ? Math.round(chapters.reduce((sum: number, ch: any) => sum + ch.progress, 0) / chapters.length)
+        : 0;
+      
+      return {
+        chapters: chapters.map((ch: any) => ({
+          id: ch.id,
+          key: ch.key,
+          progress: ch.progress,
+          status: ch.status,
+          studentNote: ch.studentNote,
+          uploadedFile: ch.uploadedFile,
+          studentGrade: ch.studentGrade,
+          teacherComments: ch.teacherComments
+        })),
+        studySessions: [],
+        deadlines: [],
+        feedback: [],
+        projectType: data.projectType || 'coursework',
+        overallProgress,
+        totalPages: Math.round(overallProgress * 0.5),
+        recentActivity: {
+          lastLogin: new Date().toISOString(),
+          lastEdit: new Date().toISOString()
+        }
+      };
     } catch (error) {
       console.error('Error fetching student progress:', error);
-      return this.getDemoStudentProgress();
+      throw error;
     }
   },
 
-  getDemoStudentProgress(): AnalyticsData {
-    return {
-      chapters: [
-        {
-          id: 1,
-          key: 'intro',
-          progress: 80,
-          status: 'completed',
-          studentNote: 'Вступ завершено',
-          wordCount: 1500,
-          timeSpent: 360
-        },
-        {
-          id: 2,
-          key: 'theory', 
-          progress: 60,
-          status: 'in_progress',
-          studentNote: 'Потрібно додати більше джерел',
-          wordCount: 2800,
-          timeSpent: 420
-        },
-        {
-          id: 3,
-          key: 'design',
-          progress: 30,
-          status: 'in_progress',
-          wordCount: 1200,
-          timeSpent: 180
-        },
-        {
-          id: 4,
-          key: 'implementation',
-          progress: 10,
-          status: 'pending'
-        }
-      ],
-      studySessions: [],
-      deadlines: [],
-      feedback: [],
-      projectType: 'diploma',
-      overallProgress: 45,
-      totalPages: 25,
-      recentActivity: {
-        lastLogin: new Date().toISOString(),
-        lastEdit: new Date().toISOString()
+  async getStudentAnalytics(): Promise<AnalyticsData> {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const [progressRes, activityRes, writingRes] = await Promise.all([
+        fetch('/api/analytics/student/progress', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch('/api/analytics/student/activity', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch('/api/analytics/student/writing-stats', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ]);
+
+      if (!progressRes.ok) {
+        throw new Error('Failed to fetch analytics data');
       }
-    };
+
+      const progressData = await progressRes.json();
+      const activityData = activityRes.ok ? await activityRes.json() : { sessions: [], deadlines: [], recentActivity: { lastLogin: '', lastEdit: '' }, timeAnalytics: {} };
+      const writingData = writingRes.ok ? await writingRes.json() : { wordCount: 0, pagesCount: 0, imagesCount: 0, citationsCount: 0 };
+
+      const projectType = await this.getProjectType();
+
+      return {
+        chapters: progressData.chapters || [],
+        studySessions: activityData.sessions || [],
+        deadlines: activityData.deadlines || [],
+        feedback: progressData.feedback || [],
+        projectType,
+        overallProgress: progressData.overallProgress || 0,
+        totalPages: writingData.pagesCount || 0,
+        recentActivity: activityData.recentActivity || { lastLogin: '', lastEdit: '' },
+        timeAnalytics: activityData.timeAnalytics,
+        writingAnalytics: writingData,
+        qualityMetrics: progressData.qualityMetrics
+      };
+    } catch (error) {
+      console.error('Error fetching student analytics:', error);
+      throw error;
+    }
+  },
+
+  async getSupervisorAnalytics(): Promise<AnalyticsData> {
+    try {
+      const students = await this.getSupervisorStudents();
+      const averageProgress = students.length > 0 
+        ? Math.round(students.reduce((sum, student) => sum + (student.progress || 0), 0) / students.length)
+        : 0;
+
+      return {
+        chapters: [],
+        studySessions: [],
+        deadlines: [],
+        feedback: [],
+        projectType: 'diploma',
+        overallProgress: 0,
+        totalPages: 0,
+        recentActivity: { lastLogin: '', lastEdit: '' },
+        students: students,
+        averageProgress: averageProgress,
+        totalStudents: students.length,
+        groupDeepAnalytics: {
+          completionForecast: {
+            onTime: Math.round(students.filter(s => (s.progress || 0) >= 60).length / students.length * 100),
+            atRisk: Math.round(students.filter(s => (s.progress || 0) >= 25 && (s.progress || 0) < 60).length / students.length * 100),
+            delayed: Math.round(students.filter(s => (s.progress || 0) < 25).length / students.length * 100)
+          },
+          qualityMetrics: {
+            avgWordCount: Math.round(students.reduce((sum, s) => sum + (s.wordCount || 0), 0) / students.length),
+            avgCitations: Math.round(students.reduce((sum, s) => sum + (s.citationsCount || 0), 0) / students.length),
+            avgFilesUploaded: Math.round(students.reduce((sum, s) => sum + (s.uploadedFiles || 0), 0) / students.length),
+            avgQualityScore: Math.round(students.reduce((sum, s) => sum + (s.qualityScore || 0), 0) / students.length)
+          }
+        },
+        communicationAnalytics: {
+          feedbackResponseTime: 24,
+          studentQuestions: 12,
+          revisionCycles: 2.3,
+          averageCorrections: 5.1
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching supervisor analytics:', error);
+      throw error;
+    }
+  },
+
+  // Activity tracking functions
+  async startActivitySession(activityType: string = 'writing', chapters: string[] = []): Promise<void> {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('/api/analytics/activity/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ activityType, chapters })
+      });
+    } catch (error) {
+      console.error('Error starting activity session:', error);
+    }
+  },
+
+  async endActivitySession(focusScore: number = 70, wordsWritten: number = 0, chapters: string[] = []): Promise<void> {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('/api/analytics/activity/end', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ focusScore, wordsWritten, chapters })
+      });
+    } catch (error) {
+      console.error('Error ending activity session:', error);
+    }
   }
 };
 
@@ -621,15 +596,6 @@ const getChapterName = (key: string): string => {
   return chapterNames[key] || key;
 };
 
-const calculateOverallProgress = (chapters: ChapterProgress[]): number => {
-  if (chapters.length === 0) return 0;
-  return Math.round(chapters.reduce((sum, chapter) => sum + chapter.progress, 0) / chapters.length);
-};
-
-const calculateTotalPages = (chapters: ChapterProgress[]): number => {
-  const totalProgress = chapters.reduce((sum, chapter) => sum + chapter.progress, 0);
-  return Math.round((totalProgress * 50) / 100);
-};
 
 const generateActivityData = (): DailyActivityData[] => {
   const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -682,7 +648,13 @@ const StudentAnalytics: React.FC<StudentAnalyticsProps> = ({
   fileActivityData,
   userInfo,
 }) => {
-  const daysUntilDeadline = useMemo(() => 14, []);
+  const daysUntilDeadline = useMemo(() => {
+    const nearestDeadline = analyticsData.deadlines
+      ?.filter(d => d.status !== 'completed')
+      .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+    return nearestDeadline?.daysUntil || 14;
+  }, [analyticsData.deadlines]);
+
   const timeAnalyticsData = useMemo(() => generateTimeAnalytics(), []);
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -703,11 +675,12 @@ const StudentAnalytics: React.FC<StudentAnalyticsProps> = ({
   }, [analyticsData.overallProgress, dailyActivityData]);
 
   const writingStats = useMemo(() => ({
-    totalWords: analyticsData.chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0),
-    totalTime: analyticsData.chapters.reduce((sum, ch) => sum + (ch.timeSpent || 0), 0),
-    wordsPerHour: analyticsData.chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0) / 
-                 (analyticsData.chapters.reduce((sum, ch) => sum + (ch.timeSpent || 0), 0) / 60) || 0
-  }), [analyticsData.chapters]);
+    totalWords: analyticsData.writingAnalytics?.wordCount || 0,
+    totalTime: analyticsData.studySessions.reduce((sum, session) => sum + session.duration, 0),
+    wordsPerHour: analyticsData.writingAnalytics?.wordCount 
+      ? Math.round((analyticsData.writingAnalytics.wordCount / (analyticsData.studySessions.reduce((sum, session) => sum + session.duration, 0) / 60)) * 100) / 100
+      : 0
+  }), [analyticsData.writingAnalytics, analyticsData.studySessions]);
 
   return (
     <div className="space-y-6">
@@ -718,7 +691,7 @@ const StudentAnalytics: React.FC<StudentAnalyticsProps> = ({
             <div>
               <h2 className="text-2xl font-bold">Мій особистий прогрес</h2>
               <p className="text-muted-foreground">
-                {userInfo.name} • {userInfo.group} • {analyticsData.projectType === 'diploma' ? 'Дипломна робота' : 'Курсова робота'}
+                {userInfo.name} • {userInfo.department_name} • {analyticsData.projectType === 'diploma' ? 'Дипломна робота' : 'Курсова робота'}
               </p>
             </div>
             <div className="text-right">
@@ -850,7 +823,13 @@ const StudentAnalytics: React.FC<StudentAnalyticsProps> = ({
                     {chapter.uploadedFile && (
                       <div className="flex items-center gap-1 text-xs text-green-600">
                         <Upload className="w-3 h-3" />
-                        Файл завантажено: {new Date(chapter.uploadedFile.uploadDate).toLocaleDateString('uk-UA')}
+                        Файл завантажено: {chapter.uploadedFile.uploadDate}
+                      </div>
+                    )}
+                    {chapter.studentGrade && (
+                      <div className="flex items-center gap-1 text-xs text-blue-600">
+                        <Star className="w-3 h-3" />
+                        Оцінка: {chapter.studentGrade}/100
                       </div>
                     )}
                   </div>
@@ -1557,13 +1536,12 @@ const SupervisorAnalytics: React.FC<SupervisorAnalyticsProps> = ({
                         <Badge variant="outline">{category.students.length} студ.</Badge>
                       </div>
                       <Progress 
-  value={(category.students.length / studentsData.length) * 100} 
-  className="h-2"
-  style={{
-    backgroundColor: `${category.color}20`,
-    '--progress-background': category.color
-  } as React.CSSProperties}
-/>
+                        value={(category.students.length / studentsData.length) * 100} 
+                        className="h-2"
+                        style={{
+                          backgroundColor: `${category.color}20`,
+                        } as React.CSSProperties}
+                      />
                     </div>
                   ))}
                 </div>
@@ -2010,6 +1988,7 @@ const SupervisorAnalytics: React.FC<SupervisorAnalyticsProps> = ({
 export default function Analytics() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [lastLoginTime, setLastLoginTime] = useState(new Date());
   const [userRole, setUserRole] = useState<'student' | 'supervisor'>('student');
   const [studentsData, setStudentsData] = useState<Student[]>([]);
@@ -2018,16 +1997,32 @@ export default function Analytics() {
   useEffect(() => {
     loadAnalyticsData();
     
+    // Start activity session when component mounts
+    const startSession = async () => {
+      try {
+        await apiService.startActivitySession('analytics', []);
+      } catch (error) {
+        console.error('Failed to start activity session:', error);
+      }
+    };
+
+    startSession();
+
     const interval = setInterval(() => {
       setLastLoginTime(new Date());
     }, 60000);
 
-    return () => clearInterval(interval);
+    // End activity session when component unmounts
+    return () => {
+      clearInterval(interval);
+      apiService.endActivitySession(75, 0, []).catch(console.error);
+    };
   }, []);
 
   const loadAnalyticsData = async () => {
     try {
       setIsLoading(true);
+      setError(null);
 
       const userData = await apiService.getCurrentUser();
       const role = userData.role === 'teacher' ? 'supervisor' : 'student';
@@ -2035,100 +2030,18 @@ export default function Analytics() {
       setUserInfo(userData);
 
       if (role === 'supervisor') {
-        const students = await apiService.getSupervisorStudents();
-        setStudentsData(students);
-
-        const averageProgress = Math.round(
-          students.reduce((sum, student) => sum + (student.progress || 0), 0) / students.length
-        );
-
-        const analytics: AnalyticsData = {
-          chapters: [],
-          studySessions: [],
-          deadlines: [],
-          feedback: [],
-          projectType: 'diploma',
-          overallProgress: 0,
-          totalPages: 0,
-          recentActivity: { lastLogin: '', lastEdit: '' },
-          students: students,
-          averageProgress: averageProgress,
-          totalStudents: students.length,
-          groupDeepAnalytics: {
-            completionForecast: {
-              onTime: Math.round(students.filter(s => (s.progress || 0) >= 60).length / students.length * 100),
-              atRisk: Math.round(students.filter(s => (s.progress || 0) >= 25 && (s.progress || 0) < 60).length / students.length * 100),
-              delayed: Math.round(students.filter(s => (s.progress || 0) < 25).length / students.length * 100)
-            },
-            qualityMetrics: {
-              avgWordCount: Math.round(students.reduce((sum, s) => sum + (s.wordCount || 0), 0) / students.length),
-              avgCitations: Math.round(students.reduce((sum, s) => sum + (s.citationsCount || 0), 0) / students.length),
-              avgFilesUploaded: Math.round(students.reduce((sum, s) => sum + (s.uploadedFiles || 0), 0) / students.length),
-              avgQualityScore: Math.round(students.reduce((sum, s) => sum + (s.qualityScore || 0), 0) / students.length)
-            }
-          },
-          communicationAnalytics: {
-            feedbackResponseTime: 24,
-            studentQuestions: 12,
-            revisionCycles: 2.3,
-            averageCorrections: 5.1
-          }
-        };
-
+        const analytics = await apiService.getSupervisorAnalytics();
         setAnalyticsData(analytics);
+        setStudentsData(analytics.students || []);
       } else {
-        const projectType = await apiService.getProjectType();
-        const chapters = await apiService.getChapters(projectType);
-        const studySessions = await apiService.getStudySessions();
-        const overallProgress = calculateOverallProgress(chapters);
-        const totalPages = calculateTotalPages(chapters);
-
-        const analytics: AnalyticsData = {
-          chapters,
-          studySessions,
-          deadlines: [],
-          feedback: [],
-          projectType,
-          overallProgress,
-          totalPages,
-          recentActivity: {
-            lastLogin: new Date().toISOString(),
-            lastEdit: chapters
-              .filter(ch => ch.uploadedFile?.uploadDate)
-              .sort((a, b) => new Date(b.uploadedFile!.uploadDate).getTime() - new Date(a.uploadedFile!.uploadDate).getTime())[0]
-              ?.uploadedFile?.uploadDate || new Date().toISOString()
-          },
-          timeAnalytics: {
-            productiveHours: ['9:00', '14:00', '19:00'],
-            weeklyStreak: 7,
-            averageSessionLength: 45,
-            focusScore: 78,
-            bestTimeOfDay: 'morning'
-          },
-          writingAnalytics: {
-            wordCount: chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0),
-            pagesCount: totalPages,
-            imagesCount: chapters.reduce((sum, ch) => sum + (ch.imagesCount || 0), 0),
-            citationsCount: 15,
-            plagiarismScore: 2,
-            readabilityScore: 75,
-            vocabularyDiversity: 68
-          },
-          qualityMetrics: {
-            structureScore: 80,
-            contentScore: 75,
-            formattingScore: 85,
-            citationScore: 70
-          }
-        };
-
+        const analytics = await apiService.getStudentAnalytics();
         setAnalyticsData(analytics);
       }
     } catch (err) {
       console.error('Error loading analytics data:', err);
-      setUserRole('student');
-      setUserInfo({ role: 'student', name: 'Тестовий Студент', group: 'КН-401' });
+      setError('Не вдалося завантажити дані аналітики');
       
+      // Fallback до демо даних у випадку помилки
       const fallbackData: AnalyticsData = {
         chapters: [],
         studySessions: [],
@@ -2148,6 +2061,191 @@ export default function Analytics() {
 
   const formatLastLogin = (date: Date) => {
     return `сьогодні ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  // Функція для експорту сторінки
+  const handleExport = () => {
+    const element = document.createElement('a');
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="uk">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Аналітика - ${userRole === 'supervisor' ? 'Викладач' : 'Студент'}</title>
+        <style>
+          body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            margin: 20px; 
+            color: #333;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 30px; 
+            border-bottom: 2px solid #3b82f6; 
+            padding-bottom: 20px;
+          }
+          .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px;
+          }
+          .stat-card { 
+            border: 1px solid #e5e7eb; 
+            padding: 20px; 
+            border-radius: 8px; 
+            text-align: center;
+            background: #f9fafb;
+          }
+          .progress-bar { 
+            background: #e5e7eb; 
+            height: 8px; 
+            border-radius: 4px; 
+            margin: 10px 0;
+            overflow: hidden;
+          }
+          .progress-fill { 
+            background: #3b82f6; 
+            height: 100%; 
+            border-radius: 4px;
+          }
+          .chapter-list { 
+            margin-top: 20px;
+          }
+          .chapter-item { 
+            border: 1px solid #e5e7eb; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 8px;
+            background: white;
+          }
+          .badge { 
+            display: inline-block; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            margin-left: 10px;
+          }
+          .badge-completed { background: #10b981; color: white; }
+          .badge-progress { background: #f59e0b; color: white; }
+          .badge-pending { background: #6b7280; color: white; }
+          .export-date { 
+            text-align: right; 
+            color: #6b7280; 
+            font-size: 12px; 
+            margin-top: 30px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${userRole === 'supervisor' ? 'Аналітика викладача' : 'Моя аналітика'}</h1>
+          <p>${userRole === 'supervisor' ? 'Управління групою та моніторинг прогресу' : 'Персональна статистика та рекомендації'}</p>
+          <p>Експорт від ${new Date().toLocaleDateString('uk-UA')} ${new Date().toLocaleTimeString('uk-UA')}</p>
+        </div>
+
+        ${userRole === 'student' ? `
+          <div class="stats-grid">
+            <div class="stat-card">
+              <h3>Загальний прогрес</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #3b82f6;">${analyticsData?.overallProgress || 0}%</div>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: ${analyticsData?.overallProgress || 0}%"></div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <h3>Завершено розділів</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #10b981;">${analyticsData?.chapters.filter(ch => ch.status === 'completed').length || 0}</div>
+              <p>з ${analyticsData?.chapters.length || 0}</p>
+            </div>
+            <div class="stat-card">
+              <h3>Загальна кількість слів</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #8b5cf6;">${analyticsData?.writingAnalytics?.wordCount || 0}</div>
+              <p>слів</p>
+            </div>
+          </div>
+
+          <div class="chapter-list">
+            <h2>Прогрес по розділах</h2>
+            ${analyticsData?.chapters.map(chapter => `
+              <div class="chapter-item">
+                <strong>${getChapterName(chapter.key)}</strong>
+                <span class="badge ${
+                  chapter.status === 'completed' ? 'badge-completed' :
+                  chapter.status === 'in_progress' ? 'badge-progress' : 'badge-pending'
+                }">
+                  ${chapter.status === 'completed' ? 'Завершено' :
+                    chapter.status === 'in_progress' ? 'В роботі' : 'Не розпочато'}
+                </span>
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: ${chapter.progress}%"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6b7280;">
+                  <span>Прогрес: ${chapter.progress}%</span>
+                  ${chapter.wordCount ? `<span>Слова: ${chapter.wordCount}</span>` : ''}
+                  ${chapter.timeSpent ? `<span>Час: ${Math.round(chapter.timeSpent / 60)} год</span>` : ''}
+                </div>
+              </div>
+            `).join('') || ''}
+          </div>
+        ` : `
+          <div class="stats-grid">
+            <div class="stat-card">
+              <h3>Студентів у групі</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #3b82f6;">${analyticsData?.totalStudents || 0}</div>
+            </div>
+            <div class="stat-card">
+              <h3>Середній прогрес</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #10b981;">${analyticsData?.averageProgress || 0}%</div>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: ${analyticsData?.averageProgress || 0}%"></div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <h3>Потребують уваги</h3>
+              <div style="font-size: 24px; font-weight: bold; color: #ef4444;">${studentsData?.filter(s => (s.progress || 0) < 25).length || 0}</div>
+              <p>студентів</p>
+            </div>
+          </div>
+
+          <div class="chapter-list">
+            <h2>Студенти групи</h2>
+            ${studentsData?.map(student => `
+              <div class="chapter-item">
+                <strong>${student.name}</strong>
+                <span class="badge ${
+                  (student.progress || 0) >= 80 ? 'badge-completed' :
+                  (student.progress || 0) >= 50 ? 'badge-progress' : 'badge-pending'
+                }">
+                  ${student.progress}%
+                </span>
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: ${student.progress}%"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6b7280;">
+                  <span>Група: ${student.group}</span>
+                  <span>Розділів: ${student.completedChapters || 0}</span>
+                  <span>Якість: ${student.qualityScore || 0}%</span>
+                </div>
+              </div>
+            `).join('') || ''}
+          </div>
+        `}
+
+        <div class="export-date">
+          Згенеровано системою моніторингу • ${new Date().toLocaleString('uk-UA')}
+        </div>
+      </body>
+      </html>
+    `;
+    
+    const file = new Blob([htmlContent], { type: 'text/html' });
+    element.href = URL.createObjectURL(file);
+    element.download = `analytics-${userRole}-${new Date().toISOString().split('T')[0]}.html`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   const dailyActivityData = useMemo(() => generateActivityData(), []);
@@ -2205,6 +2303,25 @@ export default function Analytics() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background flex">
+        <div className="hidden md:block">
+          <Sidebar />
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <AlertTriangle className="w-8 h-8 mx-auto mb-4" />
+            <p>{error}</p>
+            <Button onClick={loadAnalyticsData} className="mt-4">
+              Спробувати знову
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!analyticsData) {
     return (
       <div className="min-h-screen bg-background flex">
@@ -2235,25 +2352,33 @@ export default function Analytics() {
           <Header />
         </div>
         <main className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-br from-background via-background to-background/80">
-          {/* Header */}
+          {/* Заголовок з іконкою та описом */}
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">
-                {userRole === 'supervisor' ? 'Аналітика викладача' : 'Моя аналітика'}
-              </h1>
-              <p className="text-muted-foreground">
-                {userRole === 'supervisor' 
-                  ? 'Управління групою та моніторинг прогресу'
-                  : 'Персональна статистика та рекомендації'
-                }
-              </p>
+            <div className="flex items-center gap-2">
+              <BarChart3 className="text-primary w-7 h-7" />
+              <div>
+                <h1 className="text-3xl font-bold text-foreground">
+                  {userRole === 'supervisor' ? 'Аналітика викладача' : 'Моя аналітика'}
+                </h1>
+                <p className="text-muted-foreground text-sm">
+                  {userRole === 'supervisor' 
+                    ? 'Управління групою та моніторинг прогресу'
+                    : 'Персональна статистика та рекомендації'
+                  }
+                </p>
+              </div>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" className="gap-2">
                 <Clock className="w-4 h-4" />
                 {formatLastLogin(lastLoginTime)}
               </Button>
-              <Button variant="outline" size="sm" className="gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="gap-2"
+                onClick={handleExport}
+              >
                 <Download className="w-4 h-4" />
                 Експорт
               </Button>
@@ -2275,31 +2400,6 @@ export default function Analytics() {
               studentsData={studentsData}
             />
           )}
-
-          {/* Інформація про дані */}
-          <Card className={`backdrop-blur-sm ${
-            userRole === 'supervisor' 
-              ? "bg-accent/20 border-accent/30" 
-              : "bg-primary/20 border-primary/30"
-          }`}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Lightbulb className="w-4 h-4" />
-                <div>
-                  <p className="text-sm font-medium">
-                    {userRole === 'supervisor' 
-                      ? 'Дані оновлюються в реальному часі • Автоматичні сповіщення' 
-                      : 'Реальні дані з вашого трекера • Персональні рекомендації'
-                    }
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Останнє оновлення: {new Date().toLocaleTimeString('uk-UA')} • 
-                    Наступне оновлення: через 5 хв
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </main>
       </div>
     </div>

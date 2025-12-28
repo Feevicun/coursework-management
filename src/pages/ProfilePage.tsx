@@ -3,7 +3,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Plus, BookOpen, Trophy, Target, Trash2, Edit } from "lucide-react";
+import { 
+  Plus, 
+  BookOpen, 
+  Trophy, 
+  Target, 
+  Trash2, 
+  Edit, 
+  Users, 
+  GraduationCap,
+  Mail,
+  Phone,
+  Calendar,
+  MapPin,
+  Loader2,
+  ExternalLink,
+  Github,
+  Linkedin,
+  Award,
+  CheckCircle,
+  XCircle,
+  Clock,
+  RefreshCw
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -27,16 +49,27 @@ import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import { useTranslation } from 'react-i18next';
 import { StudentProfileCard } from '../components/StudentProfileCard';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 
 interface StudentInfo {
+  id: string;
   name: string;
   group: string;
-  course: string;
+  course: number;
   faculty: string;
   department: string;
   email: string;
   bio: string;
   phone?: string;
+  specialty?: string;
+  specialty_code?: string;
+  avatar_url?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface Project {
@@ -45,7 +78,12 @@ interface Project {
   type: string;
   status: string;
   description: string;
-  createdAt?: string;
+  technologies: string[];
+  projectUrl?: string;
+  githubUrl?: string;
+  startDate?: string;
+  endDate?: string;
+  createdAt: string;
 }
 
 interface Achievement {
@@ -53,7 +91,10 @@ interface Achievement {
   title: string;
   date: string;
   description: string;
-  createdAt?: string;
+  type?: string;
+  organization?: string;
+  certificateUrl?: string;
+  createdAt: string;
 }
 
 interface Goal {
@@ -61,26 +102,157 @@ interface Goal {
   goal: string;
   deadline: string;
   description: string;
-  createdAt?: string;
+  status: string;
+  priority: string;
+  progress: number;
+  createdAt: string;
 }
 
-// Функція для отримання інформації про студента
-const getStudentInfo = async (): Promise<StudentInfo | null> => {
+interface StudentStats {
+  totalProjects: number;
+  completedProjects: number;
+  totalAchievements: number;
+  totalGoals: number;
+  activeGoals: number;
+  completedGoals: number;
+  averageProgress: number;
+}
+
+// Функція для отримання токену
+const getAuthToken = (): string | null => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('token') || 
+           localStorage.getItem('authToken') ||
+           sessionStorage.getItem('token') ||
+           sessionStorage.getItem('authToken');
+  }
+  return null;
+};
+
+// Функція для безпечного парсингу JSON
+const safeJsonParse = (text: string) => {
   try {
-    const token = localStorage.getItem('token') || 
-                  localStorage.getItem('authToken') || 
-                  sessionStorage.getItem('token') || 
-                  sessionStorage.getItem('authToken');
-    
-    if (!token) {
-      console.log('❌ No token found for student info');
+    return JSON.parse(text);
+  } catch (error) {
+    console.error('JSON parse error:', error);
+    return null;
+  }
+};
+
+// Функція для безпечного запиту до API
+const safeFetch = async (url: string, options: any = {}) => {
+  try {
+    const token = getAuthToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...options.headers,
+    };
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      console.error(`HTTP error! status: ${response.status} for URL: ${url}`);
       return null;
     }
 
-    console.log('🔍 Fetching student info from API...');
+    const text = await response.text();
+    
+    if (!text.trim()) {
+      return null;
+    }
+
+    const data = safeJsonParse(text);
+    return data;
+  } catch (error) {
+    console.error('Fetch error:', error);
+    return null;
+  }
+};
+
+// Функція для парсингу дат з різних форматів
+const parseDate = (dateString: string): Date | null => {
+  if (!dateString) return null;
+  
+  // Формат DD.MM.YYYY
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(dateString)) {
+    const [day, month, year] = dateString.split('.');
+    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  }
+  
+  // Формат YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return new Date(dateString);
+  }
+  
+  // ISO формат
+  if (dateString.includes('T')) {
+    return new Date(dateString);
+  }
+  
+  // Спробувати стандартний парсинг
+  const date = new Date(dateString);
+  return isNaN(date.getTime()) ? null : date;
+};
+
+// Функція для валідації та форматування дати
+const validateAndFormatDate = (dateString: string): string | null => {
+  if (!dateString) return null;
+  
+  // Перевірка формату дати
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    // Якщо формат DD.MM.YYYY, конвертуємо в YYYY-MM-DD
+    if (/^\d{2}\.\d{2}\.\d{4}$/.test(dateString)) {
+      const [day, month, year] = dateString.split('.');
+      dateString = `${year}-${month}-${day}`;
+    } else {
+      console.warn(`Invalid date format: ${dateString}`);
+      return null;
+    }
+  }
+  
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) {
+    console.warn(`Invalid date: ${dateString}`);
+    return null;
+  }
+  
+  return date.toISOString().split('T')[0];
+};
+
+// Функція для форматування дати в українському форматі
+const formatDate = (dateString: string): string => {
+  const date = parseDate(dateString);
+  if (!date) return 'Не вказано';
+  
+  try {
+    return date.toLocaleDateString('uk-UA', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  } catch {
+    return dateString;
+  }
+};
+
+// Функція для отримання інформації про студента з API
+const getStudentInfo = async (): Promise<StudentInfo | null> => {
+  try {
+    const token = getAuthToken();
+    
+    if (!token) {
+      console.log('❌ No token found for student info');
+      toast.error('Потрібна авторизація');
+      return null;
+    }
+
+    console.log('🔍 Завантаження інформації про студента з API...');
     
     let studentData = null;
-    let responseData = null;
     
     // Спершу пробуємо /api/student/profile
     try {
@@ -94,143 +266,222 @@ const getStudentInfo = async (): Promise<StudentInfo | null> => {
 
       if (profileResponse.ok) {
         const profileData = await profileResponse.json();
-        console.log('📋 Student profile data:', profileData);
-        responseData = profileData;
+        console.log('📋 Дані профілю студента з API:', profileData);
         
         studentData = {
-          name: profileData.name || "",
-          group: profileData.group || "",
-          course: profileData.course || "",
-          faculty: profileData.faculty || profileData.faculty_name || "",
-          department: profileData.department || profileData.department_name || "",
-          email: profileData.email || "",
-          bio: profileData.bio || "",
-          phone: profileData.phone || ""
+          id: profileData.id || profileData.user_id || "",
+          name: profileData.name || profileData.full_name || profileData.user?.name || "",
+          group: profileData.group || profileData.group_name || profileData.user?.group || "",
+          course: parseInt(profileData.course) || parseInt(profileData.year) || 1,
+          faculty: profileData.faculty || profileData.faculty_name || profileData.user?.faculty || "",
+          department: profileData.department || profileData.department_name || profileData.user?.department || "",
+          email: profileData.email || profileData.user?.email || "",
+          bio: profileData.bio || profileData.user?.bio || "",
+          phone: profileData.phone || profileData.user?.phone || "",
+          specialty: profileData.specialty || profileData.specialty_name || profileData.user?.specialty || "",
+          specialty_code: profileData.specialty_code || profileData.user?.specialty_code || "",
+          avatar_url: profileData.avatar_url || profileData.user?.avatar_url || profileData.avatar,
+          linkedin_url: profileData.linkedin_url || profileData.user?.linkedin_url,
+          github_url: profileData.github_url || profileData.user?.github_url,
+          created_at: profileData.created_at || profileData.user?.created_at,
+          updated_at: profileData.updated_at || profileData.user?.updated_at
         };
+      } else {
+        console.log('⚠️ Profile API недоступний, намагаюся /api/current-user');
+        const errorText = await profileResponse.text();
+        console.error('Помилка API:', errorText);
       }
-    } catch {
-      console.log('⚠️ Profile API not available, trying current-user...');
+    } catch (error) {
+      console.error('❌ Помилка при отриманні профілю з API:', error);
     }
 
     // Якщо не вдалося отримати з /api/student/profile, пробуємо /api/current-user
     if (!studentData) {
-      const response = await fetch('/api/current-user', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
+      try {
+        const response = await fetch('/api/current-user', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📋 Full student info from API:', data);
-        responseData = data;
-        
-        studentData = {
-          name: data.user?.name || data.name || data.user?.full_name || data.full_name || "",
-          group: data.user?.group || data.group || data.user?.student_group || data.student_group || "",
-          course: data.user?.course || data.course || "",
-          faculty: data.user?.faculty || data.faculty || data.user?.faculty_name || data.faculty_name || "",
-          department: data.user?.department || data.department || data.user?.department_name || data.department_name || "",
-          email: data.user?.email || data.email || "",
-          bio: data.user?.bio || data.bio || "",
-          phone: data.user?.phone || data.phone || ""
-        };
+        if (response.ok) {
+          const data = await response.json();
+          console.log('📋 Дані поточного користувача з API:', data);
+          
+          studentData = {
+            id: data.id || data.user_id || "",
+            name: data.user?.name || data.name || data.full_name || "",
+            group: data.user?.group || data.group || data.group_name || "",
+            course: parseInt(data.user?.course) || parseInt(data.course) || parseInt(data.year) || 1,
+            faculty: data.user?.faculty || data.faculty || data.faculty_name || "",
+            department: data.user?.department || data.department || data.department_name || "",
+            email: data.user?.email || data.email || "",
+            bio: data.user?.bio || data.bio || "",
+            phone: data.user?.phone || data.phone || "",
+            specialty: data.user?.specialty || data.specialty || data.specialty_name || "",
+            specialty_code: data.user?.specialty_code || data.specialty_code || "",
+            avatar_url: data.user?.avatar_url || data.avatar_url || data.avatar,
+            linkedin_url: data.user?.linkedin_url || data.linkedin_url,
+            github_url: data.user?.github_url || data.github_url,
+            created_at: data.user?.created_at || data.created_at,
+            updated_at: data.user?.updated_at || data.updated_at
+          };
+        } else {
+          const errorText = await response.text();
+          console.error('Помилка API current-user:', errorText);
+        }
+      } catch (error) {
+        console.error('❌ Помилка при отриманні поточного користувача з API:', error);
       }
     }
     
     if (studentData) {
-      console.log('✅ Processed student info:', studentData);
+      console.log('✅ Оброблені дані студента з API:', studentData);
       
-      // Оновлюємо localStorage з новими даними - ТЕПЕР ВКЛЮЧАЄМО ТЕЛЕФОН
+      // Оновлюємо localStorage
       try {
-        const currentUser = {
+        const userData = {
+          id: studentData.id,
           name: studentData.name,
           email: studentData.email,
-          phone: studentData.phone || '', // Тепер телефон зберігається
-          program: studentData.faculty,
+          phone: studentData.phone || '',
+          faculty: studentData.faculty,
           year: studentData.course,
-          group: studentData.group || '', // Додаємо групу
-          id: responseData?.user?.id || responseData?.id || '',
-          bio: studentData.bio
+          group: studentData.group || '',
+          specialty: studentData.specialty || '',
+          specialty_code: studentData.specialty_code || '',
+          bio: studentData.bio,
+          avatar_url: studentData.avatar_url
         };
         
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-        console.log('✅ Updated localStorage with new user data including phone:', currentUser);
+        localStorage.setItem('currentUser', JSON.stringify(userData));
+        console.log('✅ Оновлено localStorage з даними API');
         
         window.dispatchEvent(new CustomEvent('profileUpdated'));
-        
       } catch (e) {
-        console.error('Error updating localStorage:', e);
+        console.error('Помилка оновлення localStorage:', e);
       }
       
       return studentData;
     } else {
-      console.error('❌ Failed to fetch student profile from both endpoints');
+      console.log('❌ Дані студента не знайдено в API');
+      toast.error('Не вдалося завантажити дані з сервера');
       return null;
     }
   } catch (error) {
-    console.error('❌ Error fetching student info:', error);
+    console.error('❌ Помилка отримання інформації студента з API:', error);
+    toast.error('Помилка з\'єднання з сервером');
     return null;
   }
 };
 
-// Функція для валідації та форматування дати
-const validateAndFormatDate = (dateString: string): string | null => {
-  if (!dateString) return null;
-  
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) {
-    return null;
+// Функції для отримання кольорів та іконок
+const getStatusColor = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'accepted':
+    case 'finished':
+    case 'завершено':
+      return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-200';
+    case 'in progress':
+    case 'active':
+    case 'в процесі':
+    case 'активно':
+      return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-200';
+    case 'pending':
+    case 'очікує':
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900 dark:text-yellow-200';
+    case 'cancelled':
+    case 'rejected':
+    case 'відхилено':
+      return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-200';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200';
   }
-  
-  return date.toISOString().split('T')[0]; // Повертаємо YYYY-MM-DD
+};
+
+const getStatusIcon = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'finished':
+    case 'завершено':
+      return <CheckCircle className="h-3.5 w-3.5" />;
+    case 'in progress':
+    case 'active':
+    case 'в процесі':
+    case 'активно':
+      return <Clock className="h-3.5 w-3.5" />;
+    case 'cancelled':
+    case 'rejected':
+    case 'відхилено':
+      return <XCircle className="h-3.5 w-3.5" />;
+    default:
+      return <Clock className="h-3.5 w-3.5" />;
+  }
+};
+
+const getPriorityColor = (priority: string) => {
+  switch (priority.toLowerCase()) {
+    case 'high':
+      return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-200';
+    case 'medium':
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900 dark:text-yellow-200';
+    case 'low':
+      return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-200';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200';
+  }
 };
 
 // Main component
 export default function StudentProfile() {
   const { t } = useTranslation();
-  const [studentInfo, setStudentInfo] = useState<StudentInfo>({
-    name: "",
-    group: "",
-    course: "",
-    faculty: "",
-    department: "",
-    email: "",
-    bio: "",
-    phone: "",
-  });
-
+  const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [stats, setStats] = useState<StudentStats>({
+    totalProjects: 0,
+    completedProjects: 0,
+    totalAchievements: 0,
+    totalGoals: 0,
+    activeGoals: 0,
+    completedGoals: 0,
+    averageProgress: 0
+  });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [isEditingInfo, setIsEditingInfo] = useState(false);
-  const [editedInfo, setEditedInfo] = useState<StudentInfo>(studentInfo);
+  const [editedInfo, setEditedInfo] = useState<StudentInfo | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<{ type: string; id: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Стани для додавання нових елементів
-  const [newProject, setNewProject] = useState<Omit<Project, "id">>({
+  const [newProject, setNewProject] = useState<Omit<Project, "id" | "createdAt">>({
     title: "",
     type: "",
     status: "",
     description: "",
+    technologies: []
   });
 
-  const [newAchievement, setNewAchievement] = useState<Omit<Achievement, "id">>({
+  const [newAchievement, setNewAchievement] = useState<Omit<Achievement, "id" | "createdAt">>({
     title: "",
     date: "",
     description: "",
   });
 
-  const [newGoal, setNewGoal] = useState<Omit<Goal, "id">>({
+  const [newGoal, setNewGoal] = useState<Omit<Goal, "id" | "createdAt">>({
     goal: "",
     deadline: "",
     description: "",
+    status: "active",
+    priority: "medium",
+    progress: 0
   });
 
   // Стани для редагування існуючих елементів
@@ -242,147 +493,133 @@ export default function StudentProfile() {
   const [achievementDialogOpen, setAchievementDialogOpen] = useState(false);
   const [goalDialogOpen, setGoalDialogOpen] = useState(false);
 
-  // Синхронізація даних при завантаженні
+  // Функція оновлення статистики
+  const updateStats = () => {
+    const completedProjects = projects.filter(p => 
+      p.status.toLowerCase().includes('завершено') || 
+      p.status.toLowerCase().includes('completed')
+    ).length;
+    
+    const activeGoals = goals.filter(g => 
+      g.status.toLowerCase().includes('активно') || 
+      g.status.toLowerCase().includes('active') ||
+      g.status.toLowerCase().includes('в процесі') ||
+      g.status.toLowerCase().includes('in progress')
+    ).length;
+    
+    const completedGoals = goals.filter(g => 
+      g.status.toLowerCase().includes('завершено') || 
+      g.status.toLowerCase().includes('completed')
+    ).length;
+    
+    const avgProgress = goals.length > 0 
+      ? Math.round(goals.reduce((acc, goal) => acc + goal.progress, 0) / goals.length)
+      : 0;
+
+    setStats({
+      totalProjects: projects.length,
+      completedProjects,
+      totalAchievements: achievements.length,
+      totalGoals: goals.length,
+      activeGoals,
+      completedGoals,
+      averageProgress: avgProgress
+    });
+  };
+
+  // Оновлення статистики при зміні даних
   useEffect(() => {
-    const syncUserData = () => {
-      if (studentInfo.name && studentInfo.name !== "Студент") {
-        try {
-          const userData = {
-            name: studentInfo.name,
-            email: studentInfo.email,
-            phone: studentInfo.phone || '',
-            program: studentInfo.faculty,
-            year: studentInfo.course,
-            group: studentInfo.group || '', // Додаємо групу
-            id: '',
-            bio: studentInfo.bio
-          };
-          
-          localStorage.setItem('currentUser', JSON.stringify(userData));
-          console.log('✅ Synced user data on profile load:', userData);
-          
-          window.dispatchEvent(new CustomEvent('profileUpdated'));
-        } catch (e) {
-          console.error('Error syncing user data:', e);
-        }
+    updateStats();
+  }, [projects, achievements, goals]);
+
+  // Завантаження всіх даних з API
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
+      
+      // Отримуємо основну інформацію
+      const studentInfoData = await getStudentInfo();
+      if (studentInfoData) {
+        setStudentInfo(studentInfoData);
+        setEditedInfo(studentInfoData);
+      } else {
+        setStudentInfo(null);
       }
-    };
 
-    if (studentInfo.name) {
-      syncUserData();
-    }
-  }, [studentInfo]);
-
-  // Отримання даних студента з API
-  useEffect(() => {
-    const fetchStudentData = async () => {
-      try {
-        setLoading(true);
-        
-        // Отримуємо основну інформацію про студента
-        const studentInfoData = await getStudentInfo();
-        
-        if (studentInfoData) {
-          console.log('✅ Setting student info:', studentInfoData);
-          setStudentInfo(studentInfoData);
-          setEditedInfo(studentInfoData);
-        } else {
-          console.log('⚠️ No student info found, using empty data');
-          const fallbackData = {
-            name: "Іваненко Іван Іванович",
-            group: "КН-41",
-            course: "4",
-            faculty: "Факультет інформаційних технологій",
-            department: "Кафедра програмного забезпечення",
-            email: "student@lnu.edu.ua",
-            bio: "Студент 4 курсу, спеціалізуюсь на веб-розробці та штучному інтелекті.",
-            phone: "+380123456789"
-          };
-          setStudentInfo(fallbackData);
-          setEditedInfo(fallbackData);
-        }
-
-        const token = localStorage.getItem('token') || localStorage.getItem('authToken');
-        if (!token) {
-          console.error('No token found for additional data');
-          setLoading(false);
-          return;
-        }
-
-        // Отримуємо проєкти студента
-        try {
-          const projectsResponse = await fetch('/api/student/projects', {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-
-          if (projectsResponse.ok) {
-            const projectsData = await projectsResponse.json();
-            setProjects(projectsData);
-          } else {
-            console.log('⚠️ Projects API not available, using mock data');
-            setProjects([]);
-          }
-        } catch (projectError) {
-          console.error('Error fetching projects:', projectError);
-        }
-
-        // Отримуємо досягнення студента
-        try {
-          const achievementsResponse = await fetch('/api/student/achievements', {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-
-          if (achievementsResponse.ok) {
-            const achievementsData = await achievementsResponse.json();
-            setAchievements(achievementsData);
-          } else {
-            console.log('⚠️ Achievements API not available, using mock data');
-            setAchievements([]);
-          }
-        } catch (achievementError) {
-          console.error('Error fetching achievements:', achievementError);
-        }
-
-        // Отримуємо цілі студента
-        try {
-          const goalsResponse = await fetch('/api/student/goals', {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-
-          if (goalsResponse.ok) {
-            const goalsData = await goalsResponse.json();
-            setGoals(goalsData);
-          } else {
-            console.log('⚠️ Goals API not available, using mock data');
-            setGoals([]);
-          }
-        } catch (goalError) {
-          console.error('Error fetching goals:', goalError);
-        }
-
-      } catch (error) {
-        console.error('Помилка завантаження даних студента:', error);
-        toast.error(t('profile.alerts.loadError'));
-      } finally {
+      const token = getAuthToken();
+      if (!token) {
+        toast.error('Потрібна авторизація');
         setLoading(false);
+        return;
       }
-    };
 
-    fetchStudentData();
+      // Отримуємо проєкти з API
+      try {
+        const projectsData = await safeFetch('/api/student/projects');
+        if (projectsData && Array.isArray(projectsData)) {
+          console.log('📋 Проєкти студента з API:', projectsData);
+          setProjects(projectsData);
+        } else {
+          setProjects([]);
+        }
+      } catch (error) {
+        console.error('Помилка завантаження проєктів з API:', error);
+        setProjects([]);
+      }
+
+      // Отримуємо досягнення з API
+      try {
+        const achievementsData = await safeFetch('/api/student/achievements');
+        if (achievementsData && Array.isArray(achievementsData)) {
+          console.log('📋 Досягнення студента з API:', achievementsData);
+          setAchievements(achievementsData);
+        } else {
+          setAchievements([]);
+        }
+      } catch (error) {
+        console.error('Помилка завантаження досягнень з API:', error);
+        setAchievements([]);
+      }
+
+      // Отримуємо цілі з API
+      try {
+        const goalsData = await safeFetch('/api/student/goals');
+        if (goalsData && Array.isArray(goalsData)) {
+          console.log('📋 Цілі студента з API:', goalsData);
+          setGoals(goalsData);
+        } else {
+          setGoals([]);
+        }
+      } catch (error) {
+        console.error('Помилка завантаження цілей з API:', error);
+        setGoals([]);
+      }
+
+    } catch (error) {
+      console.error('Помилка завантаження даних студента з API:', error);
+      toast.error(t('profile.alerts.loadError'));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  // Отримання даних при завантаженні компонента
+  useEffect(() => {
+    fetchAllData();
   }, [t]);
 
+  // Функція оновлення даних
+  const refreshData = async () => {
+    setRefreshing(true);
+    await fetchAllData();
+  };
+
   const handleSaveInfo = async () => {
+    if (!editedInfo) return;
+
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = getAuthToken();
       if (!token) {
         toast.error(t('profile.alerts.loginRequired'));
         return;
@@ -401,54 +638,59 @@ export default function StudentProfile() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: studentInfo.name, // Завжди відправляємо name
-          email: studentInfo.email, // Завжди відправляємо email
           group: editedInfo.group,
           course: editedInfo.course,
           bio: editedInfo.bio,
-          phone: editedInfo.phone, // Тепер телефон також зберігається
+          phone: editedInfo.phone,
+          linkedin_url: editedInfo.linkedin_url,
+          github_url: editedInfo.github_url
         }),
       });
 
       if (response.ok) {
         const updatedInfo = {
-          ...studentInfo,
+          ...studentInfo!,
           group: editedInfo.group,
           course: editedInfo.course,
           bio: editedInfo.bio,
-          phone: editedInfo.phone, // Тепер телефон також оновлюється
+          phone: editedInfo.phone,
+          linkedin_url: editedInfo.linkedin_url,
+          github_url: editedInfo.github_url
         };
         
         setStudentInfo(updatedInfo);
         setIsEditingInfo(false);
         
-        // Оновлюємо localStorage - ТЕПЕР ВКЛЮЧАЄМО ТЕЛЕФОН
+        // Оновлюємо localStorage
         try {
-          const currentUser = {
+          const userData = {
+            id: updatedInfo.id,
             name: updatedInfo.name,
             email: updatedInfo.email,
-            phone: updatedInfo.phone || '', // Тепер телефон зберігається
-            program: updatedInfo.faculty,
+            phone: updatedInfo.phone || '',
+            faculty: updatedInfo.faculty,
             year: updatedInfo.course,
-            group: updatedInfo.group || '', // Додаємо групу
-            id: '',
-            bio: updatedInfo.bio
+            group: updatedInfo.group || '',
+            specialty: updatedInfo.specialty || '',
+            specialty_code: updatedInfo.specialty_code || '',
+            bio: updatedInfo.bio,
+            avatar_url: updatedInfo.avatar_url
           };
           
-          localStorage.setItem('currentUser', JSON.stringify(currentUser));
-          console.log('✅ Updated localStorage after profile save with phone:', currentUser);
+          localStorage.setItem('currentUser', JSON.stringify(userData));
+          console.log('✅ Оновлено localStorage після збереження профілю');
           
           window.dispatchEvent(new CustomEvent('profileUpdated'));
           
         } catch (e) {
-          console.error('Error updating localStorage:', e);
+          console.error('Помилка оновлення localStorage:', e);
         }
         
         toast.success(t('profile.alerts.infoUpdated'));
         
       } else {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update profile');
+        throw new Error(errorData.message || 'Помилка оновлення профілю');
       }
     } catch (error) {
       console.error('Помилка оновлення профілю:', error);
@@ -456,11 +698,11 @@ export default function StudentProfile() {
     }
   };
 
-  // Функції для проєктів, досягнень та цілей
+  // Функції для проєктів
   const handleAddProject = async () => {
     if (newProject.title && newProject.type && newProject.status) {
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+        const token = getAuthToken();
         if (!token) {
           toast.error(t('profile.alerts.loginRequired'));
           return;
@@ -478,12 +720,18 @@ export default function StudentProfile() {
         if (response.ok) {
           const savedProject = await response.json();
           setProjects([...projects, savedProject.project]);
-          setNewProject({ title: "", type: "", status: "", description: "" });
+          setNewProject({ 
+            title: "", 
+            type: "", 
+            status: "", 
+            description: "",
+            technologies: []
+          });
           setProjectDialogOpen(false);
           toast.success(t('profile.alerts.projectAdded'));
         } else {
           const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to add project');
+          throw new Error(errorData.message || 'Помилка додавання проєкту');
         }
       } catch (error) {
         console.error('Помилка додавання проєкту:', error);
@@ -498,7 +746,7 @@ export default function StudentProfile() {
     if (!editingProject) return;
 
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = getAuthToken();
       if (!token) {
         toast.error(t('profile.alerts.loginRequired'));
         return;
@@ -515,18 +763,24 @@ export default function StudentProfile() {
           type: editingProject.type,
           status: editingProject.status,
           description: editingProject.description,
+          technologies: editingProject.technologies,
+          projectUrl: editingProject.projectUrl,
+          githubUrl: editingProject.githubUrl,
+          startDate: editingProject.startDate,
+          endDate: editingProject.endDate
         }),
       });
 
       if (response.ok) {
+        const updatedProject = await response.json();
         setProjects(projects.map(project => 
-          project.id === editingProject.id ? editingProject : project
+          project.id === editingProject.id ? updatedProject.project : project
         ));
         setEditingProject(null);
         toast.success(t('profile.alerts.projectUpdated'));
       } else {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update project');
+        throw new Error(errorData.message || 'Помилка оновлення проєкту');
       }
     } catch (error) {
       console.error('Помилка оновлення проєкту:', error);
@@ -534,9 +788,9 @@ export default function StudentProfile() {
     }
   };
 
+  // Функції для досягнень
   const handleAddAchievement = async () => {
     if (newAchievement.title && newAchievement.date) {
-      // Валідуємо та форматуємо дату
       const formattedDate = validateAndFormatDate(newAchievement.date);
       if (!formattedDate) {
         toast.error(t('profile.alerts.invalidDate'));
@@ -544,7 +798,7 @@ export default function StudentProfile() {
       }
 
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+        const token = getAuthToken();
         if (!token) {
           toast.error(t('profile.alerts.loginRequired'));
           return;
@@ -570,7 +824,7 @@ export default function StudentProfile() {
           toast.success(t('profile.alerts.achievementAdded'));
         } else {
           const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to add achievement');
+          throw new Error(errorData.message || 'Помилка додавання досягнення');
         }
       } catch (error) {
         console.error('Помилка додавання досягнення:', error);
@@ -584,7 +838,6 @@ export default function StudentProfile() {
   const handleEditAchievement = async () => {
     if (!editingAchievement) return;
 
-    // Валідуємо та форматуємо дату
     const formattedDate = validateAndFormatDate(editingAchievement.date);
     if (!formattedDate) {
       toast.error(t('profile.alerts.invalidDate'));
@@ -592,7 +845,7 @@ export default function StudentProfile() {
     }
 
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = getAuthToken();
       if (!token) {
         toast.error(t('profile.alerts.loginRequired'));
         return;
@@ -608,18 +861,22 @@ export default function StudentProfile() {
           title: editingAchievement.title,
           date: formattedDate,
           description: editingAchievement.description,
+          type: editingAchievement.type,
+          organization: editingAchievement.organization,
+          certificateUrl: editingAchievement.certificateUrl
         }),
       });
 
       if (response.ok) {
+        const updatedAchievement = await response.json();
         setAchievements(achievements.map(achievement => 
-          achievement.id === editingAchievement.id ? {...editingAchievement, date: formattedDate} : achievement
+          achievement.id === editingAchievement.id ? updatedAchievement.achievement : achievement
         ));
         setEditingAchievement(null);
         toast.success(t('profile.alerts.achievementUpdated'));
       } else {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update achievement');
+        throw new Error(errorData.message || 'Помилка оновлення досягнення');
       }
     } catch (error) {
       console.error('Помилка оновлення досягнення:', error);
@@ -627,9 +884,9 @@ export default function StudentProfile() {
     }
   };
 
+  // Функції для цілей
   const handleAddGoal = async () => {
     if (newGoal.goal && newGoal.deadline) {
-      // Валідуємо та форматуємо дату
       const formattedDeadline = validateAndFormatDate(newGoal.deadline);
       if (!formattedDeadline) {
         toast.error(t('profile.alerts.invalidDate'));
@@ -637,7 +894,7 @@ export default function StudentProfile() {
       }
 
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+        const token = getAuthToken();
         if (!token) {
           toast.error(t('profile.alerts.loginRequired'));
           return;
@@ -658,12 +915,19 @@ export default function StudentProfile() {
         if (response.ok) {
           const savedGoal = await response.json();
           setGoals([...goals, savedGoal.goal]);
-          setNewGoal({ goal: "", deadline: "", description: "" });
+          setNewGoal({ 
+            goal: "", 
+            deadline: "", 
+            description: "",
+            status: "active",
+            priority: "medium",
+            progress: 0
+          });
           setGoalDialogOpen(false);
           toast.success(t('profile.alerts.goalAdded'));
         } else {
           const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to add goal');
+          throw new Error(errorData.message || 'Помилка додавання цілі');
         }
       } catch (error) {
         console.error('Помилка додавання цілі:', error);
@@ -677,7 +941,6 @@ export default function StudentProfile() {
   const handleEditGoal = async () => {
     if (!editingGoal) return;
 
-    // Валідуємо та форматуємо дату
     const formattedDeadline = validateAndFormatDate(editingGoal.deadline);
     if (!formattedDeadline) {
       toast.error(t('profile.alerts.invalidDate'));
@@ -685,7 +948,7 @@ export default function StudentProfile() {
     }
 
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = getAuthToken();
       if (!token) {
         toast.error(t('profile.alerts.loginRequired'));
         return;
@@ -701,18 +964,22 @@ export default function StudentProfile() {
           goal: editingGoal.goal,
           deadline: formattedDeadline,
           description: editingGoal.description,
+          status: editingGoal.status,
+          priority: editingGoal.priority,
+          progress: editingGoal.progress
         }),
       });
 
       if (response.ok) {
+        const updatedGoal = await response.json();
         setGoals(goals.map(goal => 
-          goal.id === editingGoal.id ? {...editingGoal, deadline: formattedDeadline} : goal
+          goal.id === editingGoal.id ? updatedGoal.goal : goal
         ));
         setEditingGoal(null);
         toast.success(t('profile.alerts.goalUpdated'));
       } else {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update goal');
+        throw new Error(errorData.message || 'Помилка оновлення цілі');
       }
     } catch (error) {
       console.error('Помилка оновлення цілі:', error);
@@ -720,11 +987,12 @@ export default function StudentProfile() {
     }
   };
 
+  // Функції видалення
   const handleDelete = async () => {
     if (!itemToDelete) return;
 
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = getAuthToken();
       if (!token) {
         toast.error(t('profile.alerts.loginRequired'));
         return;
@@ -767,7 +1035,7 @@ export default function StudentProfile() {
         }
       } else {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to delete item');
+        throw new Error(errorData.message || 'Помилка видалення');
       }
     } catch (error) {
       console.error('Помилка видалення:', error);
@@ -803,8 +1071,8 @@ export default function StudentProfile() {
           <Header />
           <main className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-muted-foreground">{t('profile.loading')}</p>
+              <Loader2 className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+              <p className="text-muted-foreground">Завантаження даних з сервера...</p>
             </div>
           </main>
         </div>
@@ -812,11 +1080,69 @@ export default function StudentProfile() {
     );
   }
 
-  // Компонент кнопки додавання для секцій
-  const AddButton = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
-    <Button variant="outline" size="sm" onClick={onClick}>
+  if (!studentInfo) {
+    return (
+      <div className="min-h-screen bg-background flex">
+        <div className="flex-1 flex flex-col">
+          <Header />
+          <main className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="bg-destructive/10 p-4 rounded-lg mb-4">
+                <p className="text-destructive font-medium">Не вдалося завантажити профіль</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Перевірте підключення до сервера та авторизацію
+                </p>
+              </div>
+              <Button onClick={refreshData} className="mt-4">
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Спробувати знову
+              </Button>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(part => part.charAt(0))
+      .join('')
+      .toUpperCase();
+  };
+
+  // Кнопки додавання
+  const AddProjectButton = () => (
+    <Button 
+      variant="outline" 
+      size="sm"
+      onClick={() => setProjectDialogOpen(true)}
+    >
       <Plus className="w-4 h-4 mr-2" />
-      {children}
+      Додати проєкт
+    </Button>
+  );
+
+  const AddAchievementButton = () => (
+    <Button 
+      variant="outline" 
+      size="sm"
+      onClick={() => setAchievementDialogOpen(true)}
+    >
+      <Plus className="w-4 h-4 mr-2" />
+      Додати досягнення
+    </Button>
+  );
+
+  const AddGoalButton = () => (
+    <Button 
+      variant="outline" 
+      size="sm"
+      onClick={() => setGoalDialogOpen(true)}
+    >
+      <Plus className="w-4 h-4 mr-2" />
+      Додати ціль
     </Button>
   );
 
@@ -852,255 +1178,515 @@ export default function StudentProfile() {
           <ScrollArea className="h-[calc(100vh-4rem)]">
             <div className="min-h-screen bg-background">
               <div className="max-w-7xl mx-auto p-6 lg:p-8 space-y-8">
-                <div className="mb-10">
-                  <h1 className="text-4xl font-bold mb-3 text-foreground">
-                    {t('profile.title')}
-                  </h1>
-                  <p className="text-lg text-muted-foreground">
-                    {t('profile.subtitle')}
-                  </p>
+                {/* Заголовок та кнопка оновлення */}
+                <div className="mb-10 flex justify-between items-center">
+                  <div>
+                    <h1 className="text-4xl font-bold mb-3 text-foreground">
+                      Мій профіль
+                    </h1>
+                    <p className="text-lg text-muted-foreground">
+                      Особиста інформація та академічні досягнення
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshData}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    Оновити дані
+                  </Button>
                 </div>
 
-                {/* Personal Information */}
-                <StudentProfileCard
-                  title={t('profile.sections.personalInfo')}
-                  onEdit={() => setIsEditingInfo(true)}
-                >
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {t('profile.fields.name')}
-                      </p>
-                      <p className="text-lg font-semibold">{studentInfo.name}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {t('profile.fields.group')}
-                      </p>
-                      <p className="text-lg font-semibold">{studentInfo.group || t('profile.fields.notSpecified')}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {t('profile.fields.course')}
-                      </p>
-                      <p className="text-lg font-semibold">{studentInfo.course || t('profile.fields.notSpecified')}</p>
-                    </div>
-                    {/* ЗАМІСТЬ ФАКУЛЬТЕТУ ПОКАЗУЄМО ТЕЛЕФОН */}
-                    {studentInfo.phone && (
-                      <div className="space-y-1">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          {t('profile.fields.phone')}
+                {/* Статистика - показуємо тільки якщо є дані */}
+                {(stats.totalProjects > 0 || stats.totalAchievements > 0 || stats.totalGoals > 0) && (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    {stats.totalProjects > 0 && (
+                      <div className="bg-blue-50 dark:bg-blue-950/30 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Проєкти</p>
+                          <Badge variant="outline" className="text-xs">
+                            {stats.completedProjects}/{stats.totalProjects}
+                          </Badge>
+                        </div>
+                        <p className="text-2xl font-bold text-blue-800 dark:text-blue-200">{stats.totalProjects}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {stats.completedProjects} завершено
                         </p>
-                        <p className="text-lg font-semibold">{studentInfo.phone}</p>
                       </div>
                     )}
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {t('profile.fields.email')}
+
+                    {stats.totalAchievements > 0 && (
+                      <div className="bg-green-50 dark:bg-green-950/30 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-green-700 dark:text-green-300">Досягнення</p>
+                          <Badge variant="outline" className="text-xs">
+                            Нові: {achievements.filter(a => {
+                              const achievementDate = parseDate(a.date);
+                              if (!achievementDate) return false;
+                              const monthAgo = new Date();
+                              monthAgo.setMonth(monthAgo.getMonth() - 1);
+                              return achievementDate > monthAgo;
+                            }).length}
+                          </Badge>
+                        </div>
+                        <p className="text-2xl font-bold text-green-800 dark:text-green-200">{stats.totalAchievements}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Останнє: {achievements[0] ? formatDate(achievements[0].date) : 'немає'}
+                        </p>
+                      </div>
+                    )}
+
+                    {stats.totalGoals > 0 && (
+                      <div className="bg-purple-50 dark:bg-purple-950/30 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-purple-700 dark:text-purple-300">Активні цілі</p>
+                          <Badge variant="outline" className="text-xs">
+                            {stats.averageProgress}% прогрес
+                          </Badge>
+                        </div>
+                        <p className="text-2xl font-bold text-purple-800 dark:text-purple-200">{stats.activeGoals}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {stats.completedGoals} завершено
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="bg-orange-50 dark:bg-orange-950/30 p-4 rounded-lg border border-orange-200 dark:border-orange-800">
+                      <p className="text-sm font-medium text-orange-700 dark:text-orange-300 mb-1">Загальна активність</p>
+                      <p className="text-2xl font-bold text-orange-800 dark:text-orange-200">
+                        {stats.totalProjects + stats.totalAchievements + stats.totalGoals}
                       </p>
-                      <p className="text-lg font-semibold text-primary">{studentInfo.email}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {studentInfo.updated_at ? `Оновлено: ${formatDate(studentInfo.updated_at)}` : 'Профіль активний'}
+                      </p>
                     </div>
-                    {/* Факультет і кафедру можна приховати або показати в іншому місці */}
-                    <div className="space-y-1 md:col-span-2">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        {t('profile.fields.bio')}
-                      </p>
-                      <p className="text-base leading-relaxed">
-                        {studentInfo.bio || t('profile.fields.bioPlaceholder')}
-                      </p>
+                  </div>
+                )}
+
+                {/* Особиста інформація */}
+                <StudentProfileCard
+                  title="Особиста інформація"
+                  onEdit={() => setIsEditingInfo(true)}
+                >
+                  <div className="flex flex-col md:flex-row gap-6">
+                    {/* Аватар та основна інформація */}
+                    <div className="flex-shrink-0">
+                      <Avatar className="h-32 w-32 border-4 border-primary/20 shadow-lg">
+                        <AvatarImage src={studentInfo.avatar_url} />
+                        <AvatarFallback className="bg-primary/10 text-2xl font-bold">
+                          {getInitials(studentInfo.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      
+                      {/* Соціальні мережі */}
+                      {(studentInfo.linkedin_url || studentInfo.github_url) && (
+                        <div className="flex gap-2 mt-4">
+                          {studentInfo.linkedin_url && (
+                            <Button variant="outline" size="sm" asChild className="h-8 w-8 p-0">
+                              <a href={studentInfo.linkedin_url} target="_blank" rel="noopener noreferrer">
+                                <Linkedin className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          )}
+                          {studentInfo.github_url && (
+                            <Button variant="outline" size="sm" asChild className="h-8 w-8 p-0">
+                              <a href={studentInfo.github_url} target="_blank" rel="noopener noreferrer">
+                                <Github className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Детальна інформація */}
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold mb-4">{studentInfo.name}</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            <Mail className="w-3 h-3" />
+                            Електронна пошта
+                          </p>
+                          <p className="text-lg font-semibold text-primary">{studentInfo.email}</p>
+                        </div>
+
+                        {studentInfo.phone && (
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                              <Phone className="w-3 h-3" />
+                              Телефон
+                            </p>
+                            <p className="text-lg font-semibold">{studentInfo.phone}</p>
+                          </div>
+                        )}
+
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            Група
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-lg font-semibold">{studentInfo.group || 'Не вказано'}</p>
+                            <Badge variant="outline" className="text-xs">
+                              {studentInfo.course} курс
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {studentInfo.specialty && (
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                              <GraduationCap className="w-3 h-3" />
+                              Спеціальність
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-lg font-semibold">
+                                {studentInfo.specialty_code && (
+                                  <Badge variant="secondary" className="mr-2">
+                                    {studentInfo.specialty_code}
+                                  </Badge>
+                                )}
+                                {studentInfo.specialty}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {studentInfo.faculty && (
+                          <div className="space-y-1 md:col-span-2">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              Факультет
+                            </p>
+                            <p className="text-lg font-semibold">{studentInfo.faculty}</p>
+                            {studentInfo.department && (
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {studentInfo.department}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Біографія */}
+                      {studentInfo.bio && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            <Award className="w-3 h-3" />
+                            Про себе
+                          </p>
+                          <p className="text-base leading-relaxed bg-muted/30 p-4 rounded-lg border">
+                            {studentInfo.bio}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </StudentProfileCard>
 
-                {/* Projects */}
+                {/* Проєкти */}
                 <StudentProfileCard 
-                  title={t('profile.sections.projects')}
-                  onEdit={projects.length > 0 ? () => setProjectDialogOpen(true) : undefined}
+                  title="Мої проєкти"
+                  actionButton={<AddProjectButton />}
                 >
                   <div className="space-y-4">
                     {projects.length === 0 ? (
                       <div className="text-center py-8 border-2 border-dashed border-muted-foreground/20 rounded-lg">
                         <BookOpen className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="text-lg font-semibold mb-2">{t('profile.empty.projects.title')}</h3>
+                        <h3 className="text-lg font-semibold mb-2">Ще немає проєктів</h3>
                         <p className="text-muted-foreground text-sm mb-4">
-                          {t('profile.empty.projects.description')}
+                          Додайте свій перший проєкт, щоб показати свої навички
                         </p>
-                        <AddButton onClick={() => setProjectDialogOpen(true)}>
-                          {t('profile.actions.addProject')}
-                        </AddButton>
+                        <AddProjectButton />
                       </div>
                     ) : (
-                      <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {projects.map((project) => (
                           <div
                             key={project.id}
-                            className="group p-5 bg-card rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+                            className="group p-4 bg-card rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-300"
                           >
-                            <div className="flex items-start gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                                <BookOpen className="w-6 h-6 text-primary" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-bold text-lg mb-1 group-hover:text-primary transition-colors">{project.title}</h4>
-                                <p className="text-sm font-medium text-primary/70 mb-2">
-                                  {project.type} • {project.status}
-                                </p>
-                                {project.description && (
-                                  <p className="text-sm text-muted-foreground leading-relaxed">{project.description}</p>
-                                )}
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                  <BookOpen className="w-5 h-5 text-primary" />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-sm group-hover:text-primary transition-colors">
+                                    {project.title}
+                                  </h4>
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <Badge variant="outline" className="text-xs">
+                                      {project.type}
+                                    </Badge>
+                                    <Badge className={`text-xs ${getStatusColor(project.status)} flex items-center gap-1`}>
+                                      {getStatusIcon(project.status)}
+                                      {project.status}
+                                    </Badge>
+                                  </div>
+                                </div>
                               </div>
                               <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => startEditingProject(project)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Edit className="h-4 w-4" />
+                                  <Edit className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openDeleteDialog("project", project.id)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-3 w-3" />
                                 </Button>
+                              </div>
+                            </div>
+                            
+                            <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+                              {project.description}
+                            </p>
+                            
+                            {project.technologies && project.technologies.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-3">
+                                {project.technologies.slice(0, 3).map((tech, index) => (
+                                  <Badge key={index} variant="secondary" className="text-xs px-1.5 py-0.5">
+                                    {tech}
+                                  </Badge>
+                                ))}
+                                {project.technologies.length > 3 && (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0.5">
+                                    +{project.technologies.length - 3}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                            
+                            <div className="flex justify-between items-center text-xs text-muted-foreground">
+                              {project.startDate && (
+                                <div className="flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" />
+                                  {formatDate(project.startDate)}
+                                </div>
+                              )}
+                              <div className="flex gap-2">
+                                {project.githubUrl && (
+                                  <a 
+                                    href={project.githubUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="hover:text-foreground transition-colors"
+                                  >
+                                    <Github className="h-3 w-3" />
+                                  </a>
+                                )}
+                                {project.projectUrl && (
+                                  <a 
+                                    href={project.projectUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="hover:text-foreground transition-colors"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                )}
                               </div>
                             </div>
                           </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   </div>
                 </StudentProfileCard>
 
-                {/* Achievements */}
+                {/* Досягнення */}
                 <StudentProfileCard 
-                  title={t('profile.sections.achievements')}
-                  onEdit={achievements.length > 0 ? () => setAchievementDialogOpen(true) : undefined}
+                  title="Мої досягнення"
+                  actionButton={<AddAchievementButton />}
                 >
                   <div className="space-y-4">
                     {achievements.length === 0 ? (
                       <div className="text-center py-8 border-2 border-dashed border-muted-foreground/20 rounded-lg">
                         <Trophy className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="text-lg font-semibold mb-2">{t('profile.empty.achievements.title')}</h3>
+                        <h3 className="text-lg font-semibold mb-2">Ще немає досягнень</h3>
                         <p className="text-muted-foreground text-sm mb-4">
-                          {t('profile.empty.achievements.description')}
+                          Додайте свої досягнення, сертифікати та нагороди
                         </p>
-                        <AddButton onClick={() => setAchievementDialogOpen(true)}>
-                          {t('profile.actions.addAchievement')}
-                        </AddButton>
+                        <AddAchievementButton />
                       </div>
                     ) : (
-                      <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {achievements.map((achievement) => (
                           <div
                             key={achievement.id}
-                            className="group p-5 bg-card rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+                            className="group p-4 bg-card rounded-xl border border-border hover:border-yellow-300 hover:shadow-lg transition-all duration-300"
                           >
-                            <div className="flex items-start gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                                <Trophy className="w-6 h-6 text-primary" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-bold text-lg mb-2 group-hover:text-primary transition-colors">{achievement.title}</h4>
-                                <p className="text-sm font-medium text-primary/70 mb-2">
-                                  {achievement.date}
-                                </p>
-                                {achievement.description && (
-                                  <p className="text-sm text-muted-foreground leading-relaxed">
-                                    {achievement.description}
-                                  </p>
-                                )}
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                  <Trophy className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-sm group-hover:text-yellow-600 transition-colors">
+                                    {achievement.title}
+                                  </h4>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <Badge variant="outline" className="text-xs">
+                                      <Calendar className="h-3 w-3 mr-1" />
+                                      {formatDate(achievement.date)}
+                                    </Badge>
+                                    {achievement.type && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        {achievement.type}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                               <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => startEditingAchievement(achievement)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Edit className="h-4 w-4" />
+                                  <Edit className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openDeleteDialog("achievement", achievement.id)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-3 w-3" />
                                 </Button>
                               </div>
                             </div>
+                            
+                            <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+                              {achievement.description}
+                            </p>
+                            
+                            <div className="flex justify-between items-center text-xs text-muted-foreground">
+                              {achievement.organization && (
+                                <span className="font-medium">{achievement.organization}</span>
+                              )}
+                              {achievement.certificateUrl && (
+                                <a 
+                                  href={achievement.certificateUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  Сертифікат
+                                </a>
+                              )}
+                            </div>
                           </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   </div>
                 </StudentProfileCard>
 
-                {/* Goals */}
+                {/* Цілі */}
                 <StudentProfileCard 
-                  title={t('profile.sections.goals')}
-                  onEdit={goals.length > 0 ? () => setGoalDialogOpen(true) : undefined}
+                  title="Мої цілі"
+                  actionButton={<AddGoalButton />}
                 >
                   <div className="space-y-4">
                     {goals.length === 0 ? (
                       <div className="text-center py-8 border-2 border-dashed border-muted-foreground/20 rounded-lg">
                         <Target className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="text-lg font-semibold mb-2">{t('profile.empty.goals.title')}</h3>
+                        <h3 className="text-lg font-semibold mb-2">Ще немає цілей</h3>
                         <p className="text-muted-foreground text-sm mb-4">
-                          {t('profile.empty.goals.description')}
+                          Поставте собі цілі для професійного розвитку
                         </p>
-                        <AddButton onClick={() => setGoalDialogOpen(true)}>
-                          {t('profile.actions.addGoal')}
-                        </AddButton>
+                        <AddGoalButton />
                       </div>
                     ) : (
-                      <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {goals.map((goal) => (
                           <div
                             key={goal.id}
-                            className="group p-5 bg-card rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+                            className="group p-4 bg-card rounded-xl border border-border hover:border-green-300 hover:shadow-lg transition-all duration-300"
                           >
-                            <div className="flex items-start gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                                <Target className="w-6 h-6 text-primary" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-bold text-lg mb-2 group-hover:text-primary transition-colors">{goal.goal}</h4>
-                                <p className="text-sm font-medium text-primary/70 mb-2">
-                                  {t('profile.fields.deadline')}: {goal.deadline}
-                                </p>
-                                {goal.description && (
-                                  <p className="text-sm text-muted-foreground leading-relaxed">
-                                    {goal.description}
-                                  </p>
-                                )}
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                  <Target className="w-5 h-5 text-green-600 dark:text-green-400" />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-sm group-hover:text-green-600 transition-colors">
+                                    {goal.goal}
+                                  </h4>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <Badge className={`text-xs ${getStatusColor(goal.status)} flex items-center gap-1`}>
+                                      {getStatusIcon(goal.status)}
+                                      {goal.status}
+                                    </Badge>
+                                    <Badge className={`text-xs ${getPriorityColor(goal.priority)}`}>
+                                      {goal.priority}
+                                    </Badge>
+                                  </div>
+                                </div>
                               </div>
                               <div className="flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => startEditingGoal(goal)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Edit className="h-4 w-4" />
+                                  <Edit className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openDeleteDialog("goal", goal.id)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-3 w-3" />
                                 </Button>
                               </div>
                             </div>
+                            
+                            <div className="mb-3">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-muted-foreground">Прогрес:</span>
+                                <span className="font-medium">{goal.progress}%</span>
+                              </div>
+                              <Progress value={goal.progress} className="h-2" />
+                            </div>
+                            
+                            <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+                              {goal.description}
+                            </p>
+                            
+                            <div className="flex justify-between items-center text-xs text-muted-foreground">
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                Дедлайн: {formatDate(goal.deadline)}
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                Створено: {formatDate(goal.createdAt)}
+                              </span>
+                            </div>
                           </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   </div>
                 </StudentProfileCard>
@@ -1109,471 +1695,376 @@ export default function StudentProfile() {
                 <Dialog open={isEditingInfo} onOpenChange={setIsEditingInfo}>
                   <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.editInfo.title')}</DialogTitle>
+                      <DialogTitle>Редагування профілю</DialogTitle>
                     </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Заблоковані поля */}
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-name">{t('profile.fields.name')}</Label>
-                          <Input
-                            id="edit-name"
-                            value={studentInfo.name}
-                            disabled
-                            className="bg-muted text-muted-foreground"
-                          />
+                    {editedInfo && (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Заблоковані поля */}
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-name">ПІБ</Label>
+                            <Input
+                              id="edit-name"
+                              value={editedInfo.name}
+                              disabled
+                              className="bg-muted text-muted-foreground"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-email">Електронна пошта</Label>
+                            <Input
+                              id="edit-email"
+                              type="email"
+                              value={editedInfo.email}
+                              disabled
+                              className="bg-muted text-muted-foreground"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-faculty">Факультет</Label>
+                            <Input
+                              id="edit-faculty"
+                              value={editedInfo.faculty}
+                              disabled
+                              className="bg-muted text-muted-foreground"
+                            />
+                          </div>
+
+                          {editedInfo.specialty && (
+                            <div className="space-y-2">
+                              <Label htmlFor="edit-specialty">Спеціальність</Label>
+                              <Input
+                                id="edit-specialty"
+                                value={`${editedInfo.specialty_code || ''} ${editedInfo.specialty}`}
+                                disabled
+                                className="bg-muted text-muted-foreground"
+                              />
+                            </div>
+                          )}
+
+                          {/* Поля для редагування */}
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-group">Група *</Label>
+                            <Input
+                              id="edit-group"
+                              placeholder="Наприклад: КН-41"
+                              value={editedInfo.group}
+                              onChange={(e) =>
+                                setEditedInfo({ ...editedInfo, group: e.target.value })
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-course">Курс *</Label>
+                            <Input
+                              id="edit-course"
+                              type="number"
+                              min="1"
+                              max="6"
+                              placeholder="1-6"
+                              value={editedInfo.course}
+                              onChange={(e) =>
+                                setEditedInfo({ ...editedInfo, course: parseInt(e.target.value) || 1 })
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-phone">Телефон</Label>
+                            <Input
+                              id="edit-phone"
+                              placeholder="+380123456789"
+                              value={editedInfo.phone || ""}
+                              onChange={(e) =>
+                                setEditedInfo({ ...editedInfo, phone: e.target.value })
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-linkedin">LinkedIn</Label>
+                            <Input
+                              id="edit-linkedin"
+                              placeholder="https://linkedin.com/in/username"
+                              value={editedInfo.linkedin_url || ""}
+                              onChange={(e) =>
+                                setEditedInfo({ ...editedInfo, linkedin_url: e.target.value })
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-github">GitHub</Label>
+                            <Input
+                              id="edit-github"
+                              placeholder="https://github.com/username"
+                              value={editedInfo.github_url || ""}
+                              onChange={(e) =>
+                                setEditedInfo({ ...editedInfo, github_url: e.target.value })
+                              }
+                            />
+                          </div>
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="edit-faculty">{t('profile.fields.faculty')}</Label>
-                          <Input
-                            id="edit-faculty"
-                            value={studentInfo.faculty}
-                            disabled
-                            className="bg-muted text-muted-foreground"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-email">{t('profile.fields.email')}</Label>
-                          <Input
-                            id="edit-email"
-                            type="email"
-                            value={studentInfo.email}
-                            disabled
-                            className="bg-muted text-muted-foreground"
-                          />
-                        </div>
-
-                        {/* Поле телефону - ТЕПЕР РЕДАГОВАНЕ */}
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-phone">{t('profile.fields.phone')}</Label>
-                          <Input
-                            id="edit-phone"
-                            placeholder={t('profile.placeholders.phone')}
-                            value={editedInfo.phone || ""}
+                          <Label htmlFor="edit-bio">Про себе</Label>
+                          <Textarea
+                            id="edit-bio"
+                            placeholder="Розкажіть про свої інтереси, навички та досвід..."
+                            value={editedInfo.bio}
                             onChange={(e) =>
-                              setEditedInfo({ ...editedInfo, phone: e.target.value })
+                              setEditedInfo({ ...editedInfo, bio: e.target.value })
                             }
+                            rows={4}
                           />
                         </div>
 
-                        {/* Поля, які можна редагувати */}
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-group">{t('profile.fields.group')} *</Label>
-                          <Input
-                            id="edit-group"
-                            placeholder={t('profile.placeholders.group')}
-                            value={editedInfo.group}
-                            onChange={(e) =>
-                              setEditedInfo({ ...editedInfo, group: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-course">{t('profile.fields.course')} *</Label>
-                          <Input
-                            id="edit-course"
-                            placeholder={t('profile.placeholders.course')}
-                            value={editedInfo.course}
-                            onChange={(e) =>
-                              setEditedInfo({ ...editedInfo, course: e.target.value })
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-bio">{t('profile.fields.bio')}</Label>
-                        <Textarea
-                          id="edit-bio"
-                          placeholder={t('profile.placeholders.bio')}
-                          value={editedInfo.bio}
-                          onChange={(e) =>
-                            setEditedInfo({ ...editedInfo, bio: e.target.value })
-                          }
-                          rows={4}
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <DialogClose asChild>
-                          <Button variant="outline" className="flex-1">
-                            {t('profile.actions.cancel')}
+                        <div className="flex gap-2">
+                          <DialogClose asChild>
+                            <Button variant="outline" className="flex-1">
+                              Скасувати
+                            </Button>
+                          </DialogClose>
+                          <Button onClick={handleSaveInfo} className="flex-1">
+                            Зберегти зміни
                           </Button>
-                        </DialogClose>
-                        <Button onClick={handleSaveInfo} className="flex-1">
-                          {t('profile.actions.saveChanges')}
-                        </Button>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </DialogContent>
                 </Dialog>
 
-                {/* Діалоги додавання */}
+                {/* Діалог додавання/редагування проєкту */}
                 <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
-                  <DialogContent>
+                  <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.addProject.title')}</DialogTitle>
+                      <DialogTitle>
+                        {editingProject ? 'Редагувати проєкт' : 'Додати проєкт'}
+                      </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="project-title">{t('profile.fields.title')} *</Label>
+                        <Label htmlFor="project-title">Назва проєкту *</Label>
                         <Input
                           id="project-title"
-                          value={newProject.title}
+                          value={editingProject?.title || newProject.title}
                           onChange={(e) =>
-                            setNewProject({ ...newProject, title: e.target.value })
+                            editingProject
+                              ? setEditingProject({ ...editingProject, title: e.target.value })
+                              : setNewProject({ ...newProject, title: e.target.value })
                           }
-                          placeholder={t('profile.placeholders.projectTitle')}
+                          placeholder="Мій проєкт"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="project-type">{t('profile.fields.projectType')} *</Label>
+                        <Label htmlFor="project-type">Тип проєкту *</Label>
                         <Input
                           id="project-type"
-                          placeholder={t('profile.placeholders.projectType')}
-                          value={newProject.type}
+                          placeholder="Веб-додаток, Мобільний додаток, Дослідження"
+                          value={editingProject?.type || newProject.type}
                           onChange={(e) =>
-                            setNewProject({ ...newProject, type: e.target.value })
+                            editingProject
+                              ? setEditingProject({ ...editingProject, type: e.target.value })
+                              : setNewProject({ ...newProject, type: e.target.value })
                           }
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="project-status">{t('profile.fields.status')} *</Label>
-                        <Input
+                        <Label htmlFor="project-status">Статус *</Label>
+                        <select
                           id="project-status"
-                          placeholder={t('profile.placeholders.projectStatus')}
-                          value={newProject.status}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                          value={editingProject?.status || newProject.status}
                           onChange={(e) =>
-                            setNewProject({ ...newProject, status: e.target.value })
+                            editingProject
+                              ? setEditingProject({ ...editingProject, status: e.target.value })
+                              : setNewProject({ ...newProject, status: e.target.value })
                           }
-                        />
+                        >
+                          <option value="">Виберіть статус</option>
+                          <option value="в процесі">В процесі</option>
+                          <option value="завершено">Завершено</option>
+                          <option value="планується">Планується</option>
+                        </select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="project-desc">{t('profile.fields.description')}</Label>
+                        <Label htmlFor="project-description">Опис</Label>
                         <Textarea
-                          id="project-desc"
-                          placeholder={t('profile.placeholders.projectDescription')}
-                          value={newProject.description}
+                          id="project-description"
+                          placeholder="Опишіть ваш проєкт..."
+                          value={editingProject?.description || newProject.description}
                           onChange={(e) =>
-                            setNewProject({ ...newProject, description: e.target.value })
+                            editingProject
+                              ? setEditingProject({ ...editingProject, description: e.target.value })
+                              : setNewProject({ ...newProject, description: e.target.value })
                           }
+                          rows={3}
                         />
                       </div>
                       <div className="flex gap-2">
                         <DialogClose asChild>
                           <Button variant="outline" className="flex-1">
-                            {t('profile.actions.cancel')}
+                            Скасувати
                           </Button>
                         </DialogClose>
-                        <Button onClick={handleAddProject} className="flex-1">
-                          {t('profile.actions.save')}
+                        <Button 
+                          onClick={editingProject ? handleEditProject : handleAddProject} 
+                          className="flex-1"
+                        >
+                          {editingProject ? 'Зберегти зміни' : 'Додати проєкт'}
                         </Button>
                       </div>
                     </div>
                   </DialogContent>
                 </Dialog>
 
+                {/* Діалог додавання/редагування досягнення */}
                 <Dialog open={achievementDialogOpen} onOpenChange={setAchievementDialogOpen}>
-                  <DialogContent>
+                  <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.addAchievement.title')}</DialogTitle>
+                      <DialogTitle>
+                        {editingAchievement ? 'Редагувати досягнення' : 'Додати досягнення'}
+                      </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="achievement-title">{t('profile.fields.title')} *</Label>
+                        <Label htmlFor="achievement-title">Назва досягнення *</Label>
                         <Input
                           id="achievement-title"
-                          value={newAchievement.title}
+                          value={editingAchievement?.title || newAchievement.title}
                           onChange={(e) =>
-                            setNewAchievement({ ...newAchievement, title: e.target.value })
+                            editingAchievement
+                              ? setEditingAchievement({ ...editingAchievement, title: e.target.value })
+                              : setNewAchievement({ ...newAchievement, title: e.target.value })
                           }
-                          placeholder={t('profile.placeholders.achievementTitle')}
+                          placeholder="Перемога на конкурсі"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="achievement-date">{t('profile.fields.date')} *</Label>
+                        <Label htmlFor="achievement-date">Дата *</Label>
                         <Input
                           id="achievement-date"
                           type="date"
-                          placeholder={t('profile.placeholders.achievementDate')}
-                          value={newAchievement.date}
+                          value={editingAchievement?.date || newAchievement.date}
                           onChange={(e) =>
-                            setNewAchievement({ ...newAchievement, date: e.target.value })
+                            editingAchievement
+                              ? setEditingAchievement({ ...editingAchievement, date: e.target.value })
+                              : setNewAchievement({ ...newAchievement, date: e.target.value })
                           }
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="achievement-desc">{t('profile.fields.description')}</Label>
+                        <Label htmlFor="achievement-description">Опис</Label>
                         <Textarea
-                          id="achievement-desc"
-                          placeholder={t('profile.placeholders.achievementDescription')}
-                          value={newAchievement.description}
+                          id="achievement-description"
+                          placeholder="Опишіть ваше досягнення..."
+                          value={editingAchievement?.description || newAchievement.description}
                           onChange={(e) =>
-                            setNewAchievement({
-                              ...newAchievement,
-                              description: e.target.value,
-                            })
+                            editingAchievement
+                              ? setEditingAchievement({ ...editingAchievement, description: e.target.value })
+                              : setNewAchievement({ ...newAchievement, description: e.target.value })
                           }
+                          rows={3}
                         />
                       </div>
                       <div className="flex gap-2">
                         <DialogClose asChild>
                           <Button variant="outline" className="flex-1">
-                            {t('profile.actions.cancel')}
+                            Скасувати
                           </Button>
                         </DialogClose>
-                        <Button onClick={handleAddAchievement} className="flex-1">
-                          {t('profile.actions.save')}
+                        <Button 
+                          onClick={editingAchievement ? handleEditAchievement : handleAddAchievement} 
+                          className="flex-1"
+                        >
+                          {editingAchievement ? 'Зберегти зміни' : 'Додати досягнення'}
                         </Button>
                       </div>
                     </div>
                   </DialogContent>
                 </Dialog>
 
+                {/* Діалог додавання/редагування цілі */}
                 <Dialog open={goalDialogOpen} onOpenChange={setGoalDialogOpen}>
-                  <DialogContent>
+                  <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.addGoal.title')}</DialogTitle>
+                      <DialogTitle>
+                        {editingGoal ? 'Редагувати ціль' : 'Додати ціль'}
+                      </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="goal-name">{t('profile.fields.goal')} *</Label>
+                        <Label htmlFor="goal-name">Назва цілі *</Label>
                         <Input
                           id="goal-name"
-                          value={newGoal.goal}
+                          value={editingGoal?.goal || newGoal.goal}
                           onChange={(e) =>
-                            setNewGoal({ ...newGoal, goal: e.target.value })
+                            editingGoal
+                              ? setEditingGoal({ ...editingGoal, goal: e.target.value })
+                              : setNewGoal({ ...newGoal, goal: e.target.value })
                           }
-                          placeholder={t('profile.placeholders.goal')}
+                          placeholder="Вивчити нову технологію"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="goal-deadline">{t('profile.fields.deadline')} *</Label>
+                        <Label htmlFor="goal-deadline">Дедлайн *</Label>
                         <Input
                           id="goal-deadline"
                           type="date"
-                          placeholder={t('profile.placeholders.goalDeadline')}
-                          value={newGoal.deadline}
+                          value={editingGoal?.deadline || newGoal.deadline}
                           onChange={(e) =>
-                            setNewGoal({ ...newGoal, deadline: e.target.value })
+                            editingGoal
+                              ? setEditingGoal({ ...editingGoal, deadline: e.target.value })
+                              : setNewGoal({ ...newGoal, deadline: e.target.value })
                           }
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="goal-desc">{t('profile.fields.description')}</Label>
-                        <Textarea
-                          id="goal-desc"
-                          placeholder={t('profile.placeholders.goalDescription')}
-                          value={newGoal.description}
+                        <Label htmlFor="goal-progress">Прогрес (%)</Label>
+                        <Input
+                          id="goal-progress"
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={editingGoal?.progress || newGoal.progress}
                           onChange={(e) =>
-                            setNewGoal({
-                              ...newGoal,
-                              description: e.target.value,
-                            })
+                            editingGoal
+                              ? setEditingGoal({ ...editingGoal, progress: parseInt(e.target.value) || 0 })
+                              : setNewGoal({ ...newGoal, progress: parseInt(e.target.value) || 0 })
                           }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="goal-description">Опис</Label>
+                        <Textarea
+                          id="goal-description"
+                          placeholder="Опишіть вашу ціль..."
+                          value={editingGoal?.description || newGoal.description}
+                          onChange={(e) =>
+                            editingGoal
+                              ? setEditingGoal({ ...editingGoal, description: e.target.value })
+                              : setNewGoal({ ...newGoal, description: e.target.value })
+                          }
+                          rows={3}
                         />
                       </div>
                       <div className="flex gap-2">
                         <DialogClose asChild>
                           <Button variant="outline" className="flex-1">
-                            {t('profile.actions.cancel')}
+                            Скасувати
                           </Button>
                         </DialogClose>
-                        <Button onClick={handleAddGoal} className="flex-1">
-                          {t('profile.actions.save')}
+                        <Button 
+                          onClick={editingGoal ? handleEditGoal : handleAddGoal} 
+                          className="flex-1"
+                        >
+                          {editingGoal ? 'Зберегти зміни' : 'Додати ціль'}
                         </Button>
                       </div>
                     </div>
-                  </DialogContent>
-                </Dialog>
-
-                {/* Решта діалогів редагування та видалення залишаються незмінними */}
-                <Dialog open={!!editingProject} onOpenChange={() => setEditingProject(null)}>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.editProject.title')}</DialogTitle>
-                    </DialogHeader>
-                    {editingProject && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-project-title">{t('profile.fields.title')} *</Label>
-                          <Input
-                            id="edit-project-title"
-                            value={editingProject.title}
-                            onChange={(e) =>
-                              setEditingProject({ ...editingProject, title: e.target.value })
-                            }
-                            placeholder={t('profile.placeholders.projectTitle')}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-project-type">{t('profile.fields.projectType')} *</Label>
-                          <Input
-                            id="edit-project-type"
-                            placeholder={t('profile.placeholders.projectType')}
-                            value={editingProject.type}
-                            onChange={(e) =>
-                              setEditingProject({ ...editingProject, type: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-project-status">{t('profile.fields.status')} *</Label>
-                          <Input
-                            id="edit-project-status"
-                            placeholder={t('profile.placeholders.projectStatus')}
-                            value={editingProject.status}
-                            onChange={(e) =>
-                              setEditingProject({ ...editingProject, status: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-project-desc">{t('profile.fields.description')}</Label>
-                          <Textarea
-                            id="edit-project-desc"
-                            placeholder={t('profile.placeholders.projectDescription')}
-                            value={editingProject.description}
-                            onChange={(e) =>
-                              setEditingProject({ ...editingProject, description: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            className="flex-1"
-                            onClick={() => setEditingProject(null)}
-                          >
-                            {t('profile.actions.cancel')}
-                          </Button>
-                          <Button onClick={handleEditProject} className="flex-1">
-                            {t('profile.actions.saveChanges')}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </DialogContent>
-                </Dialog>
-
-                <Dialog open={!!editingAchievement} onOpenChange={() => setEditingAchievement(null)}>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.editAchievement.title')}</DialogTitle>
-                    </DialogHeader>
-                    {editingAchievement && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-achievement-title">{t('profile.fields.title')} *</Label>
-                          <Input
-                            id="edit-achievement-title"
-                            value={editingAchievement.title}
-                            onChange={(e) =>
-                              setEditingAchievement({ ...editingAchievement, title: e.target.value })
-                            }
-                            placeholder={t('profile.placeholders.achievementTitle')}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-achievement-date">{t('profile.fields.date')} *</Label>
-                          <Input
-                            id="edit-achievement-date"
-                            type="date"
-                            placeholder={t('profile.placeholders.achievementDate')}
-                            value={editingAchievement.date}
-                            onChange={(e) =>
-                              setEditingAchievement({ ...editingAchievement, date: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-achievement-desc">{t('profile.fields.description')}</Label>
-                          <Textarea
-                            id="edit-achievement-desc"
-                            placeholder={t('profile.placeholders.achievementDescription')}
-                            value={editingAchievement.description}
-                            onChange={(e) =>
-                              setEditingAchievement({
-                                ...editingAchievement,
-                                description: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            className="flex-1"
-                            onClick={() => setEditingAchievement(null)}
-                          >
-                            {t('profile.actions.cancel')}
-                          </Button>
-                          <Button onClick={handleEditAchievement} className="flex-1">
-                            {t('profile.actions.saveChanges')}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </DialogContent>
-                </Dialog>
-
-                <Dialog open={!!editingGoal} onOpenChange={() => setEditingGoal(null)}>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{t('profile.dialogs.editGoal.title')}</DialogTitle>
-                    </DialogHeader>
-                    {editingGoal && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-goal-name">{t('profile.fields.goal')} *</Label>
-                          <Input
-                            id="edit-goal-name"
-                            value={editingGoal.goal}
-                            onChange={(e) =>
-                              setEditingGoal({ ...editingGoal, goal: e.target.value })
-                            }
-                            placeholder={t('profile.placeholders.goal')}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-goal-deadline">{t('profile.fields.deadline')} *</Label>
-                          <Input
-                            id="edit-goal-deadline"
-                            type="date"
-                            placeholder={t('profile.placeholders.goalDeadline')}
-                            value={editingGoal.deadline}
-                            onChange={(e) =>
-                              setEditingGoal({ ...editingGoal, deadline: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="edit-goal-desc">{t('profile.fields.description')}</Label>
-                          <Textarea
-                            id="edit-goal-desc"
-                            placeholder={t('profile.placeholders.goalDescription')}
-                            value={editingGoal.description}
-                            onChange={(e) =>                               setEditingGoal({
-                                ...editingGoal,
-                                description: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            className="flex-1"
-                            onClick={() => setEditingGoal(null)}
-                          >
-                            {t('profile.actions.cancel')}
-                          </Button>
-                          <Button onClick={handleEditGoal} className="flex-1">
-                            {t('profile.actions.saveChanges')}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </DialogContent>
                 </Dialog>
 
@@ -1581,20 +2072,18 @@ export default function StudentProfile() {
                 <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>{t('profile.dialogs.delete.title')}</AlertDialogTitle>
+                      <AlertDialogTitle>Підтвердіть видалення</AlertDialogTitle>
                       <AlertDialogDescription>
-                        {t('profile.dialogs.delete.description')}
+                        Цю дію не можна скасувати. Елемент буде видалений назавжди.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel className="h-10 px-6 rounded-md">
-                        {t('profile.actions.cancel')}
-                      </AlertDialogCancel>
+                      <AlertDialogCancel>Скасувати</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={handleDelete}
-                        className="h-10 px-6 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       >
-                        {t('profile.actions.delete')}
+                        Видалити
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>

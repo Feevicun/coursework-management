@@ -1,4 +1,3 @@
-// Header.tsx
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState, useRef } from 'react';
@@ -11,9 +10,6 @@ import {
   Menu,
   X,
   User,
-  BookOpen,
-  GraduationCap,
-  Briefcase,
   Home,
   FileText,
   MessageSquare,
@@ -23,11 +19,6 @@ import {
   LogOut,
   Book,
   Sparkles,
-  StickyNote,
-  ListTodo,
-  Link,
-  FileCode,
-  Database
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import {
@@ -38,6 +29,13 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 
 type ThemeType = 'light' | 'dark' | 'rose' | 'mint';
 
@@ -50,14 +48,17 @@ const Header = () => {
   const [firstName, setFirstName] = useState('');
   const [userRole, setUserRole] = useState<'student' | 'teacher'>('student');
   const [isOnline, setIsOnline] = useState(true);
-  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isProfileAnimating, setIsProfileAnimating] = useState(false);
+  const [isQuickNoteOpen, setIsQuickNoteOpen] = useState(false);
+  const [quickNoteTitle, setQuickNoteTitle] = useState('');
+  const [quickNoteContent, setQuickNoteContent] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const menuRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Функція для оновлення даних користувача
   const updateUserData = () => {
@@ -72,7 +73,6 @@ const Header = () => {
         } else if (user.name) {
           const [firstName] = user.name.split(' ');
           setFirstName(firstName || '');
-          // Оновлюємо localStorage з правильним firstName
           localStorage.setItem(
             'currentUser',
             JSON.stringify({ ...user, firstName })
@@ -81,7 +81,6 @@ const Header = () => {
           setFirstName('');
         }
 
-        // Встановлюємо роль користувача
         if (user.role) {
           setUserRole(user.role);
         }
@@ -98,7 +97,6 @@ const Header = () => {
     setIsOnline(storedStatus === null ? true : storedStatus === 'online');
   };
 
-  // Слухаємо зміни в localStorage та кастомні події
   useEffect(() => {
     const handleStorageChange = () => {
       console.log('🔄 Header: Storage change detected');
@@ -110,16 +108,11 @@ const Header = () => {
       updateUserData();
     };
 
-    // Спочатку завантажуємо дані
     updateUserData();
 
-    // Слухаємо події зміни localStorage
     window.addEventListener('storage', handleStorageChange);
-    
-    // Слухаємо кастомні події оновлення даних
     window.addEventListener('userDataUpdated', handleUserDataUpdated as EventListener);
 
-    // Також слухаємо зміни в localStorage кожні 2 секунди (для дебагу)
     const interval = setInterval(() => {
       const currentUser = localStorage.getItem('currentUser');
       if (currentUser) {
@@ -142,22 +135,6 @@ const Header = () => {
     };
   }, [firstName]);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsCreateMenuOpen(false);
-      }
-    }
-    if (isCreateMenuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    } else {
-      document.removeEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isCreateMenuOpen]);
-
   const toggleLanguage = () => {
     const newLang = i18n.language === 'en' ? 'ua' : 'en';
     i18n.changeLanguage(newLang);
@@ -170,60 +147,101 @@ const Header = () => {
     localStorage.setItem('userStatus', newStatus ? 'online' : 'offline');
   };
 
-  const handleCreateSelect = (type: string) => {
-    setIsCreateMenuOpen(false);
-    
-    // Навігація для різних типів контенту
-    switch (type) {
-      case 'note':
-        navigate('/notes/new');
-        break;
-      case 'task':
-        navigate('/tasks/new');
-        break;
-      case 'project':
-        navigate('/projects/new');
-        break;
-      case 'bookmark':
-        navigate('/bookmarks/new');
-        break;
-      case 'document':
-        navigate('/documents/new');
-        break;
-      case 'code':
-        navigate('/code/new');
-        break;
-      case 'coursework':
-        navigate('/tracker?type=coursework');
-        break;
-      case 'diploma':
-        navigate('/tracker?type=diploma');
-        break;
-      case 'practice':
-        navigate('/tracker?type=practice');
-        break;
-      default:
-        navigate('/create');
+  const handleCreateNote = () => {
+    setIsQuickNoteOpen(true);
+    // Очищаємо поля при відкритті
+    setQuickNoteTitle('');
+    setQuickNoteContent('');
+  };
+
+  const handleSaveQuickNote = async () => {
+    if (!quickNoteTitle.trim() && !quickNoteContent.trim()) {
+      // Якщо обидва поля пусті, закриваємо без збереження
+      setIsQuickNoteOpen(false);
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      
+      const noteData = {
+        title: quickNoteTitle.trim() || 'Нова нотатка',
+        content: quickNoteContent,
+        tags: [],
+        category: "personal",
+        isBookmarked: false,
+        isPublic: false,
+        backgroundColor: "#ffffff",
+        textColor: "#000000",
+        images: [],
+      };
+
+      const response = await fetch('/api/notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(noteData)
+      });
+      
+      if (response.ok) {
+        const savedNote = await response.json();
+        console.log('✅ Quick note created:', savedNote);
+        
+        // Відправляємо подію для оновлення списку нотаток
+        window.dispatchEvent(new CustomEvent('noteCreated', { detail: savedNote }));
+        
+        // Закриваємо модалку
+        setIsQuickNoteOpen(false);
+        setQuickNoteTitle('');
+        setQuickNoteContent('');
+        
+        // Показуємо сповіщення про успіх
+        // Можна додати toast notification тут
+      } else {
+        const errorText = await response.text();
+        console.error("Failed to save quick note:", response.status, errorText);
+        alert(`Помилка збереження: ${response.status}`);
+      }
+    } catch (error) {
+      console.error("Error saving quick note:", error);
+      alert('Помилка збереження нотатки');
+    } finally {
+      setIsSaving(false);
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      handleSaveQuickNote();
+    }
+    if (e.key === 'Escape') {
+      setIsQuickNoteOpen(false);
+    }
+  };
+
+  // Фокус на заголовок при відкритті
+  useEffect(() => {
+    if (isQuickNoteOpen && titleInputRef.current) {
+      setTimeout(() => {
+        titleInputRef.current?.focus();
+      }, 100);
+    }
+  }, [isQuickNoteOpen]);
+
   const handleProfileClick = () => {
-    // Запускаємо анімацію
     setIsProfileAnimating(true);
-    
-    // Створюємо ефект частинок
     createParticleEffect();
     
-    // Затримка перед навігацією
     setTimeout(() => {
-      // Перенаправляємо на відповідний профіль в залежності від ролі
       if (userRole === 'teacher') {
         navigate('/teacher/info');
       } else {
         navigate('/profile');
       }
       
-      // Закінчуємо анімацію
       setTimeout(() => setIsProfileAnimating(false), 500);
     }, 600);
   };
@@ -236,7 +254,6 @@ const Header = () => {
     const centerX = buttonRect.left + buttonRect.width / 2;
     const centerY = buttonRect.top + buttonRect.height / 2;
 
-    // Створюємо частинки
     for (let i = 0; i < 12; i++) {
       createParticle(centerX, centerY);
     }
@@ -246,7 +263,6 @@ const Header = () => {
     const particle = document.createElement('div');
     particle.className = 'absolute w-1 h-1 rounded-full bg-primary pointer-events-none';
     
-    // Випадкові кольори для частинок
     const colors = [
       'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 
       'bg-indigo-500', 'bg-cyan-500', 'bg-primary'
@@ -254,20 +270,17 @@ const Header = () => {
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
     particle.className = `absolute w-1 h-1 rounded-full ${randomColor} pointer-events-none`;
     
-    // Випадковий розмір
     const size = Math.random() * 3 + 1;
     particle.style.width = `${size}px`;
     particle.style.height = `${size}px`;
     
     document.body.appendChild(particle);
 
-    // Випадковий рух
     const angle = Math.random() * Math.PI * 2;
     const speed = Math.random() * 60 + 40;
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
 
-    // Анімація
     const animation = particle.animate(
       [
         {
@@ -309,7 +322,6 @@ const Header = () => {
     }
   };
 
-  // Визначаємо пункти меню в залежності від ролі
   const getMenuItems = () => {
     const baseItems = [
       { title: t('sidebar.dashboard'), href: userRole === 'teacher' ? '/teacherdashboard' : '/dashboard', icon: Home },
@@ -321,7 +333,6 @@ const Header = () => {
       { title: t('sidebar.resources'), href: '/resources', icon: Book }
     ];
 
-    // Додаємо профіль викладача, якщо це викладач
     if (userRole === 'teacher') {
       baseItems.splice(2, 0, { 
         title: 'Мої студенти', 
@@ -334,52 +345,6 @@ const Header = () => {
   };
 
   const menuItems = getMenuItems();
-
-  // Опції для меню "Створити"
-  const createOptions = [
-    {
-      type: 'note',
-      icon: StickyNote,
-      label: t('header.createNote'),
-      description: t('header.createNoteDesc'),
-      color: 'text-blue-500'
-    },
-    {
-      type: 'task',
-      icon: ListTodo,
-      label: t('header.createTask'),
-      description: t('header.createTaskDesc'),
-      color: 'text-green-500'
-    },
-    {
-      type: 'project',
-      icon: FileText,
-      label: t('header.createProject'),
-      description: t('header.createProjectDesc'),
-      color: 'text-purple-500'
-    },
-    {
-      type: 'bookmark',
-      icon: Link,
-      label: t('header.createBookmark'),
-      description: t('header.createBookmarkDesc'),
-      color: 'text-orange-500'
-    },
-    {
-      type: 'document',
-      icon: FileCode,
-      label: t('header.createDocument'),
-      description: t('header.createDocumentDesc'),
-      color: 'text-red-500'
-    },
-    {
-      type: 'code',
-      icon: Database,
-      label: t('header.createCode'),
-      description: t('header.createCodeDesc'),
-      color: 'text-cyan-500'
-    }
-  ];
 
   return (
     <>
@@ -406,75 +371,15 @@ const Header = () => {
 
           <div className="hidden md:flex items-center gap-6 relative">
             {userRole === 'student' && (
-              <div ref={menuRef} className="relative">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 w-[110px] justify-center"
-                  onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)}
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('header.create')}
-                </Button>
-
-                {isCreateMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-64 rounded-xl border bg-popover text-popover-foreground shadow-xl z-50 animate-in slide-in-from-top-2 duration-200">
-                    <div className="p-3 border-b">
-                      <h3 className="font-semibold text-sm">{t('header.createNew')}</h3>
-                    </div>
-                    <div className="p-2">
-                      {createOptions.map((option) => {
-                        const Icon = option.icon;
-                        return (
-                          <button
-                            key={option.type}
-                            onClick={() => handleCreateSelect(option.type)}
-                            className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-accent flex items-center gap-3 transition-colors group"
-                          >
-                            <div className={cn("p-2 rounded-lg bg-accent/50 group-hover:bg-accent/80 transition-colors", option.color)}>
-                              <Icon className="h-4 w-4" />
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium">{option.label}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {option.description}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    
-                    {/* Роздільник для академічних робіт */}
-                    <div className="p-3 border-t">
-                      <h3 className="font-semibold text-sm text-muted-foreground">{t('header.academicWorks')}</h3>
-                    </div>
-                    <div className="p-2">
-                      <button
-                        onClick={() => handleCreateSelect('coursework')}
-                        className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-accent flex items-center gap-3 transition-colors group"
-                      >
-                        <BookOpen className="h-4 w-4 text-blue-500" />
-                        <span>{t('header.createCoursework')}</span>
-                      </button>
-                      <button
-                        onClick={() => handleCreateSelect('diploma')}
-                        className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-accent flex items-center gap-3 transition-colors group"
-                      >
-                        <GraduationCap className="h-4 w-4 text-purple-500" />
-                        <span>{t('header.createDiploma')}</span>
-                      </button>
-                      <button
-                        onClick={() => handleCreateSelect('practice')}
-                        className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-accent flex items-center gap-3 transition-colors group"
-                      >
-                        <Briefcase className="h-4 w-4 text-green-500" />
-                        <span>{t('header.createPractice')}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 w-[110px] justify-center"
+                onClick={handleCreateNote}
+              >
+                <Plus className="h-4 w-4" />
+                {t('header.create')}
+              </Button>
             )}
 
             <Select
@@ -501,7 +406,6 @@ const Header = () => {
               {i18n.language === 'ua' ? 'UA' : 'EN'}
             </Button>
 
-            {/* Оновлена кнопка профілю з анімацією */}
             <Button
               ref={profileButtonRef}
               variant="ghost"
@@ -517,7 +421,6 @@ const Header = () => {
                 ]
               )}
             >
-              {/* Основний іконка */}
               <Settings className={cn(
                 "h-4 w-4 transition-all duration-300",
                 isProfileAnimating && [
@@ -526,16 +429,10 @@ const Header = () => {
                 ]
               )} />
               
-              {/* Додаткові ефекти під час анімації */}
               {isProfileAnimating && (
                 <>
-                  {/* Ефект спаркл-іконки */}
                   <Sparkles className="absolute h-3 w-3 animate-spin text-primary-foreground/80" />
-                  
-                  {/* Пульсуюче кільце */}
                   <div className="absolute inset-0 rounded-full border-2 border-primary-foreground/30 animate-ping" />
-                  
-                  {/* Градієнтний оверлей */}
                   <div className="absolute inset-0 bg-gradient-to-br from-primary/50 to-transparent opacity-50" />
                 </>
               )}
@@ -565,14 +462,84 @@ const Header = () => {
         </div>
       </header>
 
-      {/* Мінімалістичне бургер-меню з анімаціями */}
+      {/* Модалка швидкої нотатки */}
+      <Dialog open={isQuickNoteOpen} onOpenChange={setIsQuickNoteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              Швидка нотатка
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Input
+                ref={titleInputRef}
+                placeholder="Заголовок (необов'язково)"
+                value={quickNoteTitle}
+                onChange={(e) => setQuickNoteTitle(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="text-base font-medium"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Textarea
+                placeholder="Що хочете записати?..."
+                value={quickNoteContent}
+                onChange={(e) => setQuickNoteContent(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="min-h-[120px] resize-none"
+              />
+            </div>
+            
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                {quickNoteContent.length} символів
+              </span>
+              <span className="text-xs">
+                Ctrl+Enter для збереження
+              </span>
+            </div>
+            
+            <div className="flex gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setIsQuickNoteOpen(false)}
+                className="flex-1"
+              >
+                Скасувати
+              </Button>
+              <Button
+                onClick={handleSaveQuickNote}
+                disabled={isSaving || (!quickNoteTitle.trim() && !quickNoteContent.trim())}
+                className="flex-1 gap-2"
+              >
+                {isSaving ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent" />
+                    Збереження...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    Зберегти
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Мобільне меню (залишається без змін) */}
       {isMobileMenuOpen && (
         <div 
           ref={overlayRef}
           className="fixed inset-0 z-50 md:hidden"
           onClick={handleOverlayClick}
         >
-          {/* Overlay з анімацією */}
           <div 
             className={cn(
               "absolute inset-0 bg-black/20 backdrop-blur-sm transition-all duration-300",
@@ -580,14 +547,12 @@ const Header = () => {
             )}
           />
           
-          {/* Меню панель з анімацією слайду */}
           <div 
             className={cn(
               "absolute top-0 left-0 h-full w-80 bg-background border-r shadow-xl transform transition-transform duration-300 ease-out",
               isClosing ? "-translate-x-full" : "translate-x-0"
             )}
           >
-            {/* Заголовок з анімацією появи */}
             <div 
               className={cn(
                 "flex items-center justify-between p-6 border-b transition-all duration-300",
@@ -619,7 +584,6 @@ const Header = () => {
               </Button>
             </div>
 
-            {/* Навігація з послідовною анімацією елементів */}
             <div className="p-4 space-y-1">
               {menuItems.map((item, index) => {
                 const Icon = item.icon;
@@ -657,7 +621,6 @@ const Header = () => {
               })}
             </div>
 
-            {/* Нижня частина з анімацією */}
             <div 
               className={cn(
                 "absolute bottom-0 left-0 right-0 p-4 border-t transition-all duration-300",
@@ -666,7 +629,6 @@ const Header = () => {
               style={{ transitionDelay: isClosing ? '0ms' : '200ms' }}
             >
               <div className="space-y-3">
-                {/* Мова */}
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Мова</span>
                   <div className="flex gap-1">
@@ -695,7 +657,6 @@ const Header = () => {
                   </div>
                 </div>
 
-                {/* Тема */}
                 <div>
                   <span className="text-sm font-medium block mb-2">Тема</span>
                   <div className="grid grid-cols-2 gap-2">
@@ -713,7 +674,6 @@ const Header = () => {
                   </div>
                 </div>
 
-                {/* Вийти */}
                 <Button
                   variant="outline"
                   className="w-full gap-2 transition-all hover:scale-105 hover:border-destructive/50 hover:text-destructive"

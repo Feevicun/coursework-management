@@ -18,6 +18,7 @@ import TeacherGrades from './pages/TeacherGraders';
 import TeacherInfo from './pages/TeacherInfo'; 
 import TeacherApplications from './pages/StudentApplications'; 
 import NotesPage from './pages/NotesPage';
+import AllTeachersPage from './pages/AllTeachersPage'
 
 import { ThemeProvider } from './context/ThemeContext';
 import { VoiceAssistant } from './components/VoiceAssistant/VoiceAssistant';
@@ -41,6 +42,8 @@ function App() {
             <Route path="/tracker" element={<ThesisTracker />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/notespage" element={<NotesPage />} /> 
+            <Route path="/choose-teacher" element={<AllTeachersPage />} />
+            <Route path="/teachers" element={<AllTeachersPage />} /> {/* Додано новий маршрут */}
             
             {/* Викладацькі маршрути */}
             <Route path="/teacherdashboard" element={<TeacherDashboard />} />

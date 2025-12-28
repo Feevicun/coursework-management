@@ -1,8 +1,7 @@
-// StudentProfileModal.tsx
+// StudentProfileModal.tsx - оновлена версія зі стилем TeacherProfileModal
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
   User, 
@@ -12,34 +11,48 @@ import {
   Trophy, 
   Target, 
   Calendar,
-  ExternalLink,
-  Github,
-  Linkedin,
-  MapPin,
+  Users,
   GraduationCap,
+  MapPin,
+  Building,
   Award,
   Clock,
   CheckCircle,
-  XCircle
+  XCircle,
+  Code,
+  Star,
+  Layers,
+  Activity,
+  ExternalLink,
+  Github,
+  Linkedin,
+  X
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 
-interface StudentProfileModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  studentId: string;
-  studentData?: {
-    id: string; 
-    name: string;
-    email: string;
-    phone: string;
-    program: string;
-    year: string;
-    description: string;
-    studentAvatar?: string;
-  };
+interface StudentProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  avatar_url?: string;
+  course: number;
+  faculty: string;
+  department?: string;
+  bio?: string;
+  group?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  specialty?: string;
+  specialty_code?: string;
+  created_at?: string;
+  updated_at?: string;
+  skills?: string[];
+  interests?: string[];
+  university?: string;
+  status?: 'active' | 'inactive' | 'graduated';
 }
 
 interface Project {
@@ -78,358 +91,294 @@ interface Goal {
   createdAt: string;
 }
 
-interface StudentProfile {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  avatar_url?: string;
-  course: number;
-  faculty: string;
-  department?: string;
-  bio?: string;
-  group?: string;
-  linkedin_url?: string;
-  github_url?: string;
+interface StudentProfileModalProps {
+  studentId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isMobile?: boolean;
+  initialData?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    avatar?: string;
+    program?: string;
+    year?: string;
+    bio?: string;
+  };
 }
 
-// Функція для отримання токену
-const getAuthToken = (): string | null => {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('authToken') || 
-           sessionStorage.getItem('authToken') ||
-           localStorage.getItem('token') ||
-           sessionStorage.getItem('token');
-  }
-  return null;
+// Функція для безпечного парсингу чисел
+const safeParseInt = (value: string | number | undefined, defaultValue: number = 1): number => {
+  if (value === undefined || value === null) return defaultValue;
+  const num = typeof value === 'string' ? parseInt(value, 10) : Math.floor(value);
+  return isNaN(num) ? defaultValue : num;
 };
 
-// Функція для безпечного парсингу JSON
-const safeJsonParse = (text: string) => {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    console.error('JSON parse error:', error);
-    return null;
-  }
+// Функція для отримання рядка з будь-якого значення
+const safeGetString = (value: unknown, defaultValue: string = ''): string => {
+  if (value === undefined || value === null) return defaultValue;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value.toString();
+  return String(value);
 };
 
-// Функція для безпечного запиту до API
-const safeFetch = async (url: string, options: any = {}) => {
+// Функція для форматування дати
+const formatDate = (dateString: string): string => {
   try {
-    const token = getAuthToken();
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...options.headers,
-    };
-
-    const response = await fetch(url, {
-      ...options,
-      headers,
+    return new Date(dateString).toLocaleDateString('uk-UA', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     });
-
-    if (!response.ok) {
-      console.error(`HTTP error! status: ${response.status}`);
-      return null;
-    }
-
-    const text = await response.text();
-    
-    if (!text.trim()) {
-      return null;
-    }
-
-    const data = safeJsonParse(text);
-    return data;
-  } catch (error) {
-    console.error('Fetch error:', error);
-    return null;
+  } catch {
+    return dateString;
   }
 };
 
-const StudentProfileModal = ({ isOpen, onClose, studentId, studentData }: StudentProfileModalProps) => {
-  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+// Функції для отримання кольорів та іконок
+const getStatusColor = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'accepted':
+    case 'finished':
+    case 'завершено':
+      return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-200';
+    case 'in progress':
+    case 'active':
+    case 'в процесі':
+    case 'активно':
+      return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-200';
+    case 'pending':
+    case 'очікує':
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900 dark:text-yellow-200';
+    case 'cancelled':
+    case 'rejected':
+    case 'відхилено':
+      return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-200';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200';
+  }
+};
+
+const getStatusIcon = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'finished':
+    case 'завершено':
+      return <CheckCircle className="h-3.5 w-3.5" />;
+    case 'in progress':
+    case 'active':
+    case 'в процесі':
+    case 'активно':
+      return <Clock className="h-3.5 w-3.5" />;
+    case 'cancelled':
+    case 'rejected':
+    case 'відхилено':
+      return <XCircle className="h-3.5 w-3.5" />;
+    default:
+      return <Clock className="h-3.5 w-3.5" />;
+  }
+};
+
+export function StudentProfileModal({ 
+  studentId, 
+  open, 
+  onOpenChange,
+  isMobile = false,
+  initialData 
+}: StudentProfileModalProps) {
+  const [student, setStudent] = useState<StudentProfile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    if (isOpen && studentId) {
+    if (open && studentId) {
       fetchStudentData();
     } else {
       // Reset state when modal closes
-      setStudentProfile(null);
+      setStudent(null);
       setProjects([]);
       setAchievements([]);
       setGoals([]);
-      setIsLoading(true);
       setActiveTab('overview');
     }
-  }, [isOpen, studentId]);
+  }, [open, studentId]);
 
   const fetchStudentData = async () => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
       
-      // Спочатку намагаємося отримати повний профіль студента з API
-      const fullProfile = await fetchStudentProfile();
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
       
-      if (fullProfile) {
-        // Якщо отримали профіль з API, використовуємо його
-        setStudentProfile(fullProfile);
-      } else if (studentData) {
-        // Якщо API не повернув даних, використовуємо дані з заявки
-        const profileData: StudentProfile = {
-          id: studentId,
-          name: studentData.name,
-          email: studentData.email,
-          phone: studentData.phone,
-          course: parseInt(studentData.year) || 3,
-          faculty: getFacultyFromProgram(studentData.program),
-          bio: await fetchStudentBio(), // Отримуємо bio окремо
-          group: studentData.year,
-          avatar_url: studentData.studentAvatar
-        };
-        setStudentProfile(profileData);
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
-      // Завантажуємо додаткові дані
-      await Promise.all([
-        fetchStudentProjects(),
-        fetchStudentAchievements(),
-        fetchStudentGoals()
-      ]);
+      // Завантажуємо основні дані студента з API
+      const studentResponse = await fetch(`/api/students/${studentId}/profile`, { headers });
+      if (studentResponse.ok) {
+        const studentData = await studentResponse.json();
+        console.log('📱 Дані студента для модального вікна:', studentData);
+        
+        const formattedStudent: StudentProfile = {
+          id: studentId,
+          name: safeGetString(studentData.name || studentData.user?.name || initialData?.name, 'Студент'),
+          email: safeGetString(studentData.email || studentData.user?.email || initialData?.email),
+          phone: safeGetString(studentData.phone || studentData.user?.phone || initialData?.phone),
+          avatar_url: safeGetString(studentData.avatar_url || studentData.user?.avatar_url || initialData?.avatar),
+          course: safeParseInt(studentData.course || studentData.year || initialData?.year, 1),
+          faculty: safeGetString(studentData.faculty || studentData.user?.faculty || studentData.faculty_name, 'Не вказано'),
+          department: safeGetString(studentData.department || studentData.user?.department || studentData.department_name),
+          bio: safeGetString(studentData.bio || studentData.user?.bio || initialData?.bio, 'Біографія не вказана'),
+          group: safeGetString(studentData.group || studentData.user?.group || studentData.group_name),
+          linkedin_url: safeGetString(studentData.linkedin_url || studentData.user?.linkedin_url),
+          github_url: safeGetString(studentData.github_url || studentData.user?.github_url),
+          specialty: safeGetString(studentData.specialty || studentData.user?.specialty || studentData.specialty_name || initialData?.program),
+          specialty_code: safeGetString(studentData.specialty_code || studentData.user?.specialty_code),
+          created_at: safeGetString(studentData.created_at || studentData.user?.created_at),
+          updated_at: safeGetString(studentData.updated_at || studentData.user?.updated_at),
+          skills: Array.isArray(studentData.skills || studentData.user?.skills) ? (studentData.skills || studentData.user?.skills) as string[] : [],
+          interests: Array.isArray(studentData.interests || studentData.user?.interests) ? (studentData.interests || studentData.user?.interests) as string[] : [],
+          university: safeGetString(studentData.university || studentData.user?.university),
+          status: (studentData.status || studentData.user?.status || 'active') as 'active' | 'inactive' | 'graduated'
+        };
+        
+        setStudent(formattedStudent);
+      } else {
+        // Якщо API не працює, використовуємо початкові дані
+        if (initialData) {
+          const fallbackStudent: StudentProfile = {
+            id: studentId,
+            name: safeGetString(initialData.name, 'Студент'),
+            email: safeGetString(initialData.email),
+            phone: safeGetString(initialData.phone),
+            avatar_url: safeGetString(initialData.avatar),
+            course: safeParseInt(initialData.year, 1),
+            faculty: 'Не вказано',
+            department: undefined,
+            bio: safeGetString(initialData.bio, 'Біографія не вказана'),
+            group: undefined,
+            linkedin_url: undefined,
+            github_url: undefined,
+            specialty: safeGetString(initialData.program),
+            specialty_code: undefined,
+            created_at: undefined,
+            updated_at: undefined,
+            skills: [],
+            interests: [],
+            university: undefined,
+            status: 'active'
+          };
+          setStudent(fallbackStudent);
+        }
+      }
+
+      // Завантажуємо проєкти
+      const projectsResponse = await fetch(`/api/students/${studentId}/projects`, { headers });
+      if (projectsResponse.ok) {
+        const projectsData = await projectsResponse.json();
+        if (Array.isArray(projectsData)) {
+          const typedProjects: Project[] = projectsData.map((item: Record<string, unknown>) => ({
+            id: safeGetString(item.id),
+            title: safeGetString(item.title, 'Без назви'),
+            type: safeGetString(item.type),
+            status: safeGetString(item.status),
+            description: safeGetString(item.description),
+            technologies: Array.isArray(item.technologies) ? item.technologies as string[] : [],
+            projectUrl: safeGetString(item.projectUrl),
+            githubUrl: safeGetString(item.githubUrl),
+            startDate: safeGetString(item.startDate),
+            endDate: safeGetString(item.endDate),
+            createdAt: safeGetString(item.createdAt)
+          }));
+          setProjects(typedProjects);
+        }
+      }
+
+      // Завантажуємо досягнення
+      const achievementsResponse = await fetch(`/api/students/${studentId}/achievements`, { headers });
+      if (achievementsResponse.ok) {
+        const achievementsData = await achievementsResponse.json();
+        if (Array.isArray(achievementsData)) {
+          const typedAchievements: Achievement[] = achievementsData.map((item: Record<string, unknown>) => ({
+            id: safeGetString(item.id),
+            title: safeGetString(item.title),
+            date: safeGetString(item.date),
+            description: safeGetString(item.description),
+            type: safeGetString(item.type),
+            organization: safeGetString(item.organization),
+            certificateUrl: safeGetString(item.certificateUrl),
+            createdAt: safeGetString(item.createdAt)
+          }));
+          setAchievements(typedAchievements);
+        }
+      }
+
+      // Завантажуємо цілі
+      const goalsResponse = await fetch(`/api/students/${studentId}/goals`, { headers });
+      if (goalsResponse.ok) {
+        const goalsData = await goalsResponse.json();
+        if (Array.isArray(goalsData)) {
+          const typedGoals: Goal[] = goalsData.map((item: Record<string, unknown>) => ({
+            id: safeGetString(item.id),
+            goal: safeGetString(item.goal),
+            deadline: safeGetString(item.deadline),
+            description: safeGetString(item.description),
+            status: safeGetString(item.status),
+            priority: safeGetString(item.priority),
+            progress: typeof item.progress === 'number' ? item.progress as number : 0,
+            createdAt: safeGetString(item.createdAt)
+          }));
+          setGoals(typedGoals);
+        }
+      }
 
     } catch (error) {
-      console.error('Error fetching student data:', error);
-      // Використовуємо тільки дані з заявки при помилці
-      if (studentData) {
-        setStudentProfile({
-          id: studentId,
-          name: studentData.name,
-          email: studentData.email,
-          phone: studentData.phone,
-          course: parseInt(studentData.year) || 3,
-          faculty: getFacultyFromProgram(studentData.program),
-          bio: studentData.description,
-          group: studentData.year,
-          avatar_url: studentData.studentAvatar
-        });
-      }
+      console.error('Error loading student data:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Нова функція для отримання профілю студента з API
-  const fetchStudentProfile = async (): Promise<StudentProfile | null> => {
-    try {
-      const token = getAuthToken();
-      if (!token) {
-        console.log('No token for student profile API');
-        return null;
-      }
+  const tabs = [
+    { id: 'overview', label: 'Огляд', icon: User },
+    { id: 'projects', label: 'Проєкти', icon: BookOpen },
+    { id: 'achievements', label: 'Досягнення', icon: Trophy },
+    { id: 'goals', label: 'Цілі', icon: Target },
+    { id: 'skills', label: 'Навички', icon: Code },
+  ];
 
-      // Використовуємо API для отримання профілю студента
-      const data = await safeFetch(`/api/students/${studentId}/profile`);
-      
-      if (data) {
-        return {
-          id: studentId,
-          name: data.name || data.user?.name || studentData?.name || "",
-          email: data.email || data.user?.email || studentData?.email || "",
-          phone: data.phone || data.user?.phone || studentData?.phone || "",
-          course: data.course || data.user?.course || parseInt(studentData?.year || "3"),
-          faculty: data.faculty || data.user?.faculty || getFacultyFromProgram(studentData?.program),
-          department: data.department || data.user?.department,
-          bio: data.bio || data.user?.bio || studentData?.description || "",
-          group: data.group || data.user?.group || studentData?.year,
-          avatar_url: data.avatar_url || data.user?.avatar_url || studentData?.studentAvatar,
-          linkedin_url: data.linkedin_url || data.user?.linkedin_url,
-          github_url: data.github_url || data.user?.github_url
-        };
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error fetching student profile:', error);
-      return null;
-    }
+  // Статистика
+  const stats = {
+    totalProjects: projects.length,
+    completedProjects: projects.filter(p => 
+      p.status.toLowerCase().includes('завершено') || 
+      p.status.toLowerCase().includes('completed')
+    ).length,
+    totalAchievements: achievements.length,
+    totalGoals: goals.length,
+    activeGoals: goals.filter(g => 
+      g.status.toLowerCase().includes('активно') || 
+      g.status.toLowerCase().includes('active') ||
+      g.status.toLowerCase().includes('в процесі') ||
+      g.status.toLowerCase().includes('in progress')
+    ).length,
+    completedGoals: goals.filter(g => 
+      g.status.toLowerCase().includes('завершено') || 
+      g.status.toLowerCase().includes('completed')
+    ).length,
+    averageProgress: goals.length > 0 
+      ? Math.round(goals.reduce((acc, goal) => acc + goal.progress, 0) / goals.length)
+      : 0
   };
 
-  // Функція для отримання bio з профілю студента
-  const fetchStudentBio = async (): Promise<string> => {
-    try {
-      const token = getAuthToken();
-      if (!token) return studentData?.description || "";
-
-      // Отримуємо профіль поточного користувача і шукаємо студента за ID
-      const currentUser = await safeFetch('/api/current-user');
-      if (currentUser && currentUser.id === studentId) {
-        return currentUser.bio || currentUser.user?.bio || studentData?.description || "";
-      }
-      
-      // Якщо це не поточний користувач, намагаємося отримати профіль студента
-      const studentProfile = await safeFetch(`/api/students/${studentId}`);
-      if (studentProfile) {
-        return studentProfile.bio || studentProfile.user?.bio || studentData?.description || "";
-      }
-      
-      return studentData?.description || "";
-    } catch {
-      return studentData?.description || "";
-    }
-  };
-
-  const fetchStudentProjects = async () => {
-    try {
-      const token = getAuthToken();
-      if (!token) {
-        console.log('No token for projects API');
-        setProjects([]);
-        return;
-      }
-
-      const data = await safeFetch('/api/student/projects');
-      if (data && Array.isArray(data)) {
-        setProjects(data);
-      } else {
-        setProjects([]);
-      }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-      setProjects([]);
-    }
-  };
-
-  const fetchStudentAchievements = async () => {
-    try {
-      const token = getAuthToken();
-      if (!token) {
-        console.log('No token for achievements API');
-        setAchievements([]);
-        return;
-      }
-
-      const data = await safeFetch('/api/student/achievements');
-      if (data && Array.isArray(data)) {
-        setAchievements(data);
-      } else {
-        setAchievements([]);
-      }
-    } catch (error) {
-      console.error('Error fetching achievements:', error);
-      setAchievements([]);
-    }
-  };
-
-  const fetchStudentGoals = async () => {
-    try {
-      const token = getAuthToken();
-      if (!token) {
-        console.log('No token for goals API');
-        setGoals([]);
-        return;
-      }
-
-      const data = await safeFetch('/api/student/goals');
-      if (data && Array.isArray(data)) {
-        setGoals(data);
-      } else {
-        setGoals([]);
-      }
-    } catch (error) {
-      console.error('Error fetching goals:', error);
-      setGoals([]);
-    }
-  };
-
-  const getFacultyFromProgram = (program: string = ""): string => {
-    if (program.includes('комп\'ютер') || program.includes('програм') || program.includes('інформацій')) {
-      return "Факультет інформаційних технологій";
-    } else if (program.includes('кібербезпека')) {
-      return "Факультет кібербезпеки";
-    } else if (program.includes('математик')) {
-      return "Факультет математики та інформатики";
-    } else if (program.includes('штучний інтелект')) {
-      return "Факультет штучного інтелекту";
-    } else {
-      return "Факультет інформаційних технологій";
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'completed':
-      case 'accepted':
-      case 'finished':
-      case 'завершено':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'in progress':
-      case 'active':
-      case 'в процесі':
-      case 'активно':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'pending':
-      case 'очікує':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'cancelled':
-      case 'rejected':
-      case 'відхилено':
-        return 'bg-red-100 text-red-800 border-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'completed':
-      case 'finished':
-      case 'завершено':
-        return <CheckCircle className="h-3 w-3" />;
-      case 'in progress':
-      case 'active':
-      case 'в процесі':
-      case 'активно':
-        return <Clock className="h-3 w-3" />;
-      case 'cancelled':
-      case 'rejected':
-      case 'відхилено':
-        return <XCircle className="h-3 w-3" />;
-      default:
-        return <Clock className="h-3 w-3" />;
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority.toLowerCase()) {
-      case 'high':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'medium':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'low':
-        return 'bg-green-100 text-green-800 border-green-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString('uk-UA', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateString;
-    }
-  };
-
+  // Отримання ініціалів
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -438,425 +387,600 @@ const StudentProfileModal = ({ isOpen, onClose, studentId, studentData }: Studen
       .toUpperCase();
   };
 
-  const tabs = [
-    { id: 'overview', label: 'Огляд', icon: User },
-    { id: 'projects', label: 'Проєкти', icon: BookOpen },
-    { id: 'achievements', label: 'Досягнення', icon: Trophy },
-    { id: 'goals', label: 'Цілі', icon: Target },
-  ];
-
-  if (!studentProfile && !isLoading) {
-    return null;
-  }
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0 overflow-hidden">
-        <DialogHeader className="px-6 py-4 border-b shrink-0">
-          <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-            <User className="h-6 w-6" />
-            Профіль студента
-          </DialogTitle>
-        </DialogHeader>
-        
-        {isLoading ? (
-          <div className="flex justify-center items-center py-12 flex-1">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+  // Спрощена мобільна версія
+  const MobileModal = () => (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={cn(
+        "max-w-full p-0 overflow-hidden",
+        "fixed inset-x-0 bottom-0 top-auto translate-y-0",
+        "rounded-t-2xl border-b-0 h-auto max-h-[85vh]"
+      )}>
+        {/* Заголовок */}
+        <div className="sticky top-0 z-50 bg-background border-b px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onOpenChange(false)}
+              className="h-8 w-8"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            <h1 className="font-bold text-base">Профіль студента</h1>
           </div>
-        ) : studentProfile ? (
-          <div className="flex flex-col h-full overflow-hidden">
-            {/* Навігація по вкладках */}
-            <div className="border-b shrink-0">
-              <ScrollArea className="w-full">
-                <nav className="flex space-x-8 px-6">
-                  {tabs.map((tab) => {
-                    const Icon = tab.icon;
-                    return (
-                      <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors whitespace-nowrap ${
-                          activeTab === tab.id
-                            ? 'border-primary text-primary'
-                            : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground'
-                        }`}
-                      >
-                        <Icon className="h-4 w-4" />
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </nav>
-              </ScrollArea>
-            </div>
+        </div>
 
-            <ScrollArea className="flex-1">
-              <div className="p-6">
-                {/* Вкладка Огляд */}
-                {activeTab === 'overview' && (
-                  <div className="space-y-6">
-                    {/* Основна інформація */}
-                    <Card className="shadow-sm">
-                      <CardContent className="p-6">
-                        <div className="flex flex-col sm:flex-row items-start gap-6">
-                          <Avatar className="h-24 w-24 border-2 border-primary/20 shadow-md mx-auto sm:mx-0">
-                            <AvatarImage src={studentProfile.avatar_url} />
-                            <AvatarFallback className="bg-primary/10 text-lg font-semibold">
-                              {getInitials(studentProfile.name)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 w-full">
-                            <h2 className="text-2xl sm:text-3xl font-bold mb-3 text-foreground text-center sm:text-left">{studentProfile.name}</h2>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                              <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/20">
-                                <Mail className="h-4 w-4 text-primary flex-shrink-0" />
-                                <span className="text-sm truncate">{studentProfile.email}</span>
-                              </div>
-                              <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/20">
-                                <Phone className="h-4 w-4 text-primary flex-shrink-0" />
-                                <span className="text-sm">{studentProfile.phone || 'Не вказано'}</span>
-                              </div>
-                              <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/20">
-                                <GraduationCap className="h-4 w-4 text-primary flex-shrink-0" />
-                                <span className="text-sm">{studentProfile.course} курс</span>
-                              </div>
-                              <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/20">
-                                <MapPin className="h-4 w-4 text-primary flex-shrink-0" />
-                                <span className="text-sm">{studentProfile.group || 'Група не вказана'}</span>
-                              </div>
-                            </div>
-                            
-                            <div className="flex flex-wrap gap-2 mb-4">
-                              <Badge variant="secondary" className="text-sm px-3 py-1">
-                                {studentProfile.faculty}
-                              </Badge>
-                              {studentProfile.department && (
-                                <Badge variant="outline" className="text-sm px-3 py-1">
-                                  {studentProfile.department}
-                                </Badge>
-                              )}
-                            </div>
-                            
-                            {/* Соціальні мережі */}
-                            {(studentProfile.linkedin_url || studentProfile.github_url) && (
-                              <div className="flex flex-wrap gap-3 mt-4">
-                                {studentProfile.linkedin_url && (
-                                  <Button variant="outline" size="sm" asChild className="gap-2">
-                                    <a href={studentProfile.linkedin_url} target="_blank" rel="noopener noreferrer">
-                                      <Linkedin className="h-4 w-4" />
-                                      LinkedIn
-                                    </a>
-                                  </Button>
-                                )}
-                                {studentProfile.github_url && (
-                                  <Button variant="outline" size="sm" asChild className="gap-2">
-                                    <a href={studentProfile.github_url} target="_blank" rel="noopener noreferrer">
-                                      <Github className="h-4 w-4" />
-                                      GitHub
-                                    </a>
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {studentProfile.bio && (
-                          <div className="mt-6">
-                            <h3 className="font-semibold text-lg mb-3 flex items-center gap-2">
-                              <Award className="h-5 w-5 text-primary" />
-                              Про себе
-                            </h3>
-                            <p className="text-muted-foreground leading-relaxed bg-muted/30 p-4 rounded-lg border">
-                              {studentProfile.bio}
-                            </p>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Статистика - показуємо тільки ненульові значення */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {projects.length > 0 && (
-                        <Card className="text-center hover:shadow-md transition-shadow">
-                          <CardContent className="p-4 sm:p-6">
-                            <BookOpen className="h-8 w-8 sm:h-10 sm:w-10 text-blue-500 mx-auto mb-3" />
-                            <div className="text-2xl sm:text-3xl font-bold text-blue-600">{projects.length}</div>
-                            <div className="text-sm text-muted-foreground font-medium">Проєктів</div>
-                            {projects.filter(p => p.status.toLowerCase().includes('завершено') || p.status.toLowerCase().includes('completed')).length > 0 && (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                {projects.filter(p => p.status.toLowerCase().includes('завершено') || p.status.toLowerCase().includes('completed')).length} завершено
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      )}
-                      
-                      {achievements.length > 0 && (
-                        <Card className="text-center hover:shadow-md transition-shadow">
-                          <CardContent className="p-4 sm:p-6">
-                            <Trophy className="h-8 w-8 sm:h-10 sm:w-10 text-yellow-500 mx-auto mb-3" />
-                            <div className="text-2xl sm:text-3xl font-bold text-yellow-600">{achievements.length}</div>
-                            <div className="text-sm text-muted-foreground font-medium">Досягнень</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Останнє: {formatDate(achievements[0].date)}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
-                      
-                      {goals.length > 0 && (
-                        <Card className="text-center hover:shadow-md transition-shadow">
-                          <CardContent className="p-4 sm:p-6">
-                            <Target className="h-8 w-8 sm:h-10 sm:w-10 text-green-500 mx-auto mb-3" />
-                            <div className="text-2xl sm:text-3xl font-bold text-green-600">{goals.length}</div>
-                            <div className="text-sm text-muted-foreground font-medium">Активних цілей</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {Math.round(goals.reduce((acc, goal) => acc + goal.progress, 0) / goals.length)}% прогрес
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
-                      
-                      {/* Якщо немає жодних даних, показуємо повідомлення */}
-                      {projects.length === 0 && achievements.length === 0 && goals.length === 0 && (
-                        <div className="col-span-3 text-center py-8">
-                          <div className="bg-muted/30 rounded-lg p-6 border border-dashed">
-                            <BookOpen className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-                            <h3 className="text-lg font-medium mb-2 text-foreground">Ще немає активності</h3>
-                            <p className="text-muted-foreground text-sm">
-                              Студент ще не додав проєктів, досягнень або цілей
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Вкладка Проєкти */}
-                {activeTab === 'projects' && (
-                  <div className="space-y-4">
-                    {projects.length > 0 ? (
-                      projects.map((project) => (
-                        <Card key={project.id} className="hover:shadow-lg transition-shadow duration-300 border">
-                          <CardContent className="p-4 sm:p-6">
-                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-4">
-                              <div className="flex-1">
-                                <h3 className="text-lg sm:text-xl font-semibold mb-2 text-foreground">{project.title}</h3>
-                                <div className="flex flex-wrap gap-2 mb-3">
-                                  <Badge variant="outline" className="px-2 py-1 text-xs">
-                                    {project.type}
-                                  </Badge>
-                                  <Badge className={`px-2 py-1 border text-xs ${getStatusColor(project.status)} flex items-center gap-1`}>
-                                    {getStatusIcon(project.status)}
-                                    {project.status}
-                                  </Badge>
-                                </div>
-                              </div>
-                              <div className="flex gap-2 self-end sm:self-auto">
-                                {project.githubUrl && (
-                                  <Button variant="outline" size="sm" asChild className="h-8 w-8 p-0">
-                                    <a href={project.githubUrl} target="_blank" rel="noopener noreferrer" title="GitHub">
-                                      <Github className="h-4 w-4" />
-                                    </a>
-                                  </Button>
-                                )}
-                                {project.projectUrl && (
-                                  <Button variant="outline" size="sm" asChild className="h-8 w-8 p-0">
-                                    <a href={project.projectUrl} target="_blank" rel="noopener noreferrer" title="Live Demo">
-                                      <ExternalLink className="h-4 w-4" />
-                                    </a>
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                            
-                            <p className="text-muted-foreground mb-4 leading-relaxed text-sm sm:text-base">
-                              {project.description}
-                            </p>
-                            
-                            {project.technologies && project.technologies.length > 0 && (
-                              <div className="mb-4">
-                                <h4 className="font-medium mb-2 text-foreground">Технології:</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  {project.technologies.map((tech, index) => (
-                                    <Badge key={index} variant="secondary" className="px-2 py-1 text-xs">
-                                      {tech}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-4 text-sm text-muted-foreground">
-                              {project.startDate && (
-                                <div className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3 flex-shrink-0" />
-                                  Початок: {formatDate(project.startDate)}
-                                </div>
-                              )}
-                              {project.endDate && (
-                                <div className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3 flex-shrink-0" />
-                                  Завершення: {formatDate(project.endDate)}
-                                </div>
-                              )}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))
-                    ) : (
-                      <Card>
-                        <CardContent className="text-center py-8 sm:py-12">
-                          <BookOpen className="h-12 w-12 sm:h-16 sm:w-16 mx-auto text-muted-foreground mb-4" />
-                          <h3 className="text-lg sm:text-xl font-medium mb-2 text-foreground">Проєктів поки немає</h3>
-                          <p className="text-muted-foreground text-sm sm:text-base">
-                            Студент ще не додав жодного проєкту до свого профілю
-                          </p>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                )}
-
-                {/* Вкладка Досягнення */}
-                {activeTab === 'achievements' && (
-                  <div className="space-y-4">
-                    {achievements.length > 0 ? (
-                      achievements.map((achievement) => (
-                        <Card key={achievement.id} className="hover:shadow-lg transition-shadow duration-300 border">
-                          <CardContent className="p-4 sm:p-6">
-                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-4">
-                              <div className="flex-1">
-                                <h3 className="text-lg sm:text-xl font-semibold mb-2 text-foreground">{achievement.title}</h3>
-                                <div className="flex flex-wrap gap-2 mb-3">
-                                  {achievement.type && (
-                                    <Badge variant="outline" className="px-2 py-1 text-xs">
-                                      {achievement.type}
-                                    </Badge>
-                                  )}
-                                  {achievement.organization && (
-                                    <Badge variant="secondary" className="px-2 py-1 text-xs">
-                                      {achievement.organization}
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="text-left sm:text-right">
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground mb-2">
-                                  <Calendar className="h-3 w-3 flex-shrink-0" />
-                                  {formatDate(achievement.date)}
-                                </div>
-                                {achievement.certificateUrl && (
-                                  <Button variant="outline" size="sm" asChild className="gap-1">
-                                    <a href={achievement.certificateUrl} target="_blank" rel="noopener noreferrer">
-                                      <ExternalLink className="h-3 w-3" />
-                                      Сертифікат
-                                    </a>
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                            
-                            <p className="text-muted-foreground leading-relaxed text-sm sm:text-base">
-                              {achievement.description}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      ))
-                    ) : (
-                      <Card>
-                        <CardContent className="text-center py-8 sm:py-12">
-                          <Trophy className="h-12 w-12 sm:h-16 sm:w-16 mx-auto text-muted-foreground mb-4" />
-                          <h3 className="text-lg sm:text-xl font-medium mb-2 text-foreground">Досягнень поки немає</h3>
-                          <p className="text-muted-foreground text-sm sm:text-base">
-                            Студент ще не додав жодного досягнення до свого профілю
-                          </p>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                )}
-
-                {/* Вкладка Цілі */}
-                {activeTab === 'goals' && (
-                  <div className="space-y-4">
-                    {goals.length > 0 ? (
-                      goals.map((goal) => (
-                        <Card key={goal.id} className="hover:shadow-lg transition-shadow duration-300 border">
-                          <CardContent className="p-4 sm:p-6">
-                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-4">
-                              <div className="flex-1">
-                                <h3 className="text-lg sm:text-xl font-semibold mb-2 text-foreground">{goal.goal}</h3>
-                                <div className="flex flex-wrap gap-2 mb-3">
-                                  <Badge className={`px-2 py-1 border text-xs ${getStatusColor(goal.status)} flex items-center gap-1`}>
-                                    {getStatusIcon(goal.status)}
-                                    {goal.status}
-                                  </Badge>
-                                  <Badge className={`px-2 py-1 border text-xs ${getPriorityColor(goal.priority)}`}>
-                                    {goal.priority} пріоритет
-                                  </Badge>
-                                  <Badge variant="outline" className="px-2 py-1 text-xs">
-                                    Прогрес: {goal.progress}%
-                                  </Badge>
-                                </div>
-                              </div>
-                              <div className="text-left sm:text-right">
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                  <Calendar className="h-3 w-3 flex-shrink-0" />
-                                  {formatDate(goal.deadline)}
-                                </div>
-                              </div>
-                            </div>
-                            
-                            {goal.description && (
-                              <p className="text-muted-foreground mb-4 leading-relaxed text-sm sm:text-base">
-                                {goal.description}
-                              </p>
-                            )}
-                            
-                            {/* Прогрес бар */}
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Прогрес виконання</span>
-                                <span className="font-medium text-foreground">{goal.progress}%</span>
-                              </div>
-                              <Progress value={goal.progress} className="h-2" />
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))
-                    ) : (
-                      <Card>
-                        <CardContent className="text-center py-8 sm:py-12">
-                          <Target className="h-12 w-12 sm:h-16 sm:w-16 mx-auto text-muted-foreground mb-4" />
-                          <h3 className="text-lg sm:text-xl font-medium mb-2 text-foreground">Цілей поки немає</h3>
-                          <p className="text-muted-foreground text-sm sm:text-base">
-                            Студент ще не додав жодної цілі до свого профілю
-                          </p>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
+        {/* Компактна навігація */}
+        <div className="sticky top-[49px] z-40 bg-background border-b px-4 py-1">
+          <div className="flex space-x-1 overflow-x-auto pb-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg flex items-center gap-1 whitespace-nowrap text-xs font-medium",
+                    "transition-all duration-200 min-w-[70px]",
+                    activeTab === tab.id
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  <Icon className="h-3 w-3 flex-shrink-0" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
-        ) : (
-          <div className="text-center py-12 flex-1 flex items-center justify-center">
-            <div>
-              <User className="h-12 w-12 sm:h-16 sm:w-16 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg sm:text-xl font-medium mb-2 text-foreground">Профіль не знайдено</h3>
-              <p className="text-muted-foreground text-sm sm:text-base">
-                Не вдалося завантажити інформацію про студента
-              </p>
-            </div>
+        </div>
+
+        {/* Основний контент */}
+        <div className="overflow-y-auto max-h-[calc(85vh-90px)]">
+          <div className="px-4 py-4">
+            <CompactModalContent />
           </div>
-        )}
+        </div>
       </DialogContent>
     </Dialog>
   );
-};
+
+  // Спрощена десктоп версія
+  const DesktopModal = () => (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={cn(
+        "max-w-2xl p-0 overflow-hidden",
+        "lg:max-w-3xl"
+      )}>
+        <DialogHeader className="px-4 py-3 border-b sticky top-0 bg-background z-10">
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-lg font-bold">Профіль студента</DialogTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              className="h-7 w-7 p-0"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </DialogHeader>
+        
+        {/* Навігація */}
+        <div className="border-b bg-muted/30 px-4 py-1">
+          <nav className="flex space-x-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg flex items-center gap-2 text-sm font-medium",
+                    "transition-all duration-200",
+                    activeTab === tab.id
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-muted'
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Контент */}
+        <ScrollArea className="max-h-[60vh]">
+          <div className="px-4 py-4">
+            <CompactModalContent />
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // Спрощений контент з додатковими полями
+  const CompactModalContent = () => {
+    if (isLoading) {
+      return (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      );
+    }
+
+    if (!student) {
+      return (
+        <div className="text-center py-6">
+          <User className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+          <p className="text-muted-foreground text-sm">
+            Не вдалося завантажити інформацію
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {/* Вкладка Огляд */}
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            {/* Основна інформація */}
+            <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+              <Avatar className="h-14 w-14 border-2 border-primary/20">
+                <AvatarImage src={student.avatar_url} />
+                <AvatarFallback className="bg-primary/10 text-lg">
+                  {getInitials(student.name)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-base">{student.name}</h3>
+                <p className="text-primary text-sm mb-2">Студент {student.course} курсу</p>
+                <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                  {student.group && (
+                    <Badge variant="outline" className="text-xs px-2 py-0.5">
+                      <Users className="h-3 w-3 mr-1" />
+                      {student.group}
+                    </Badge>
+                  )}
+                  {student.specialty && (
+                    <Badge variant="outline" className="text-xs px-2 py-0.5">
+                      <GraduationCap className="h-3 w-3 mr-1" />
+                      {student.specialty_code ? `${student.specialty_code}` : student.specialty}
+                    </Badge>
+                  )}
+                  {student.status && (
+                    <Badge variant="outline" className={cn(
+                      "text-xs px-2 py-0.5",
+                      student.status === 'active' ? 'bg-green-100 text-green-800 border-green-200' : 
+                      student.status === 'graduated' ? 'bg-blue-100 text-blue-800 border-blue-200' : 
+                      'bg-gray-100 text-gray-800 border-gray-200'
+                    )}>
+                      <Activity className="h-3 w-3 mr-1" />
+                      {student.status === 'active' ? 'Активний' : 
+                       student.status === 'graduated' ? 'Випускник' : 'Неактивний'}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Контактна інформація */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-sm flex items-center gap-2 text-muted-foreground">
+                <User className="h-4 w-4" />
+                Контактна інформація
+              </h4>
+              
+              {/* Електронна пошта */}
+              <div className="flex items-start gap-3 p-3 border rounded-lg">
+                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                  <Mail className="h-4 w-4 text-blue-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-muted-foreground mb-1">Електронна пошта</p>
+                  <a 
+                    href={`mailto:${student.email}`}
+                    className="font-medium text-sm hover:text-blue-600 transition-colors truncate block"
+                  >
+                    {student.email}
+                  </a>
+                </div>
+              </div>
+
+              {/* Телефон */}
+              {student.phone && (
+                <div className="flex items-start gap-3 p-3 border rounded-lg">
+                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                    <Phone className="h-4 w-4 text-green-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Телефон</p>
+                    <a 
+                      href={`tel:${student.phone.replace(/\s/g, '')}`}
+                      className="font-medium text-sm hover:text-green-600 transition-colors"
+                    >
+                      {student.phone}
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* Факультет */}
+              <div className="flex items-start gap-3 p-3 border rounded-lg">
+                <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                  <Building className="h-4 w-4 text-purple-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-muted-foreground mb-1">Факультет</p>
+                  <p className="font-medium text-sm">{student.faculty}</p>
+                </div>
+              </div>
+
+              {/* Кафедра */}
+              {student.department && (
+                <div className="flex items-start gap-3 p-3 border rounded-lg">
+                  <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                    <MapPin className="h-4 w-4 text-orange-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Кафедра</p>
+                    <p className="font-medium text-sm">{student.department}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Соціальні мережі */}
+              {(student.linkedin_url || student.github_url) && (
+                <div className="flex items-start gap-3 p-3 border rounded-lg">
+                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <ExternalLink className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground mb-1">Соціальні мережі</p>
+                    <div className="flex gap-2">
+                      {student.linkedin_url && (
+                        <a 
+                          href={student.linkedin_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-sm hover:text-blue-600 transition-colors flex items-center gap-1"
+                        >
+                          <Linkedin className="h-3.5 w-3.5" />
+                        </a>
+                      )}
+                      {student.github_url && (
+                        <a 
+                          href={student.github_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-sm hover:text-gray-800 transition-colors flex items-center gap-1"
+                        >
+                          <Github className="h-3.5 w-3.5" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Біографія / Про себе */}
+            {student.bio && student.bio !== 'Біографія не вказана' && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Award className="h-4 w-4 text-muted-foreground" />
+                  <h4 className="font-semibold text-sm text-muted-foreground">Про себе</h4>
+                </div>
+                <div className="p-3 border rounded-lg bg-muted/20">
+                  <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                    {student.bio}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Швидка статистика */}
+            <div className="pt-3 border-t">
+              <div className="grid grid-cols-4 gap-3">
+                <div className="text-center p-2 bg-blue-50 dark:bg-blue-950/30 rounded-lg">
+                  <div className="text-lg font-bold text-blue-600">{stats.totalProjects}</div>
+                  <div className="text-xs text-muted-foreground">Проєктів</div>
+                  {stats.completedProjects > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      {stats.completedProjects} завершено
+                    </div>
+                  )}
+                </div>
+                <div className="text-center p-2 bg-yellow-50 dark:bg-yellow-950/30 rounded-lg">
+                  <div className="text-lg font-bold text-yellow-600">{stats.totalAchievements}</div>
+                  <div className="text-xs text-muted-foreground">Досягнень</div>
+                  {achievements[0] && (
+                    <div className="text-xs text-muted-foreground">
+                      {formatDate(achievements[0].date)}
+                    </div>
+                  )}
+                </div>
+                <div className="text-center p-2 bg-green-50 dark:bg-green-950/30 rounded-lg">
+                  <div className="text-lg font-bold text-green-600">{stats.totalGoals}</div>
+                  <div className="text-xs text-muted-foreground">Цілей</div>
+                  <div className="text-xs text-muted-foreground">
+                    {stats.activeGoals} активних
+                  </div>
+                </div>
+                <div className="text-center p-2 bg-purple-50 dark:bg-purple-950/30 rounded-lg">
+                  <div className="text-lg font-bold text-purple-600">{stats.averageProgress}%</div>
+                  <div className="text-xs text-muted-foreground">Прогрес</div>
+                  <div className="text-xs text-muted-foreground">
+                    Середній
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Вкладка Проєкти */}
+        {activeTab === 'projects' && (
+          <div className="space-y-3">
+            {projects.length > 0 ? (
+              projects.slice(0, 6).map((project) => (
+                <div key={project.id} className="p-4 border rounded-lg hover:border-primary/30 transition-colors">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-sm mb-1 line-clamp-2">{project.title}</h4>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {project.type}
+                        </Badge>
+                        <Badge className={`text-xs ${getStatusColor(project.status)} flex items-center gap-1`}>
+                          {getStatusIcon(project.status)}
+                          {project.status}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      {project.githubUrl && (
+                        <a 
+                          href={project.githubUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <Github className="h-4 w-4" />
+                        </a>
+                      )}
+                      {project.projectUrl && (
+                        <a 
+                          href={project.projectUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {project.description && (
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 mt-2">
+                      {project.description}
+                    </p>
+                  )}
+                  {project.technologies && project.technologies.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {project.technologies.slice(0, 3).map((tech, index) => (
+                        <Badge key={index} variant="secondary" className="text-xs px-1.5 py-0.5">
+                          {tech}
+                        </Badge>
+                      ))}
+                      {project.technologies.length > 3 && (
+                        <Badge variant="outline" className="text-xs px-1.5 py-0.5">
+                          +{project.technologies.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex gap-3 text-xs text-muted-foreground mt-2">
+                    {project.startDate && (
+                      <div className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {formatDate(project.startDate)}
+                      </div>
+                    )}
+                    {project.endDate && (
+                      <div className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {formatDate(project.endDate)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8">
+                <BookOpen className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">Проєктів немає</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Вкладка Досягнення */}
+        {activeTab === 'achievements' && (
+          <div className="space-y-3">
+            {achievements.length > 0 ? (
+              achievements.slice(0, 6).map((achievement) => (
+                <div key={achievement.id} className="p-4 border rounded-lg hover:border-yellow-300 transition-colors">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0">
+                      <Trophy className="h-5 w-5 text-yellow-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h4 className="font-semibold text-sm mb-1">{achievement.title}</h4>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">
+                              <Calendar className="h-3 w-3 mr-1" />
+                              {formatDate(achievement.date)}
+                            </Badge>
+                            {achievement.type && (
+                              <Badge variant="secondary" className="text-xs">
+                                {achievement.type}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        {achievement.certificateUrl && (
+                          <a 
+                            href={achievement.certificateUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        )}
+                      </div>
+                      {achievement.description && (
+                        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 mt-2">
+                          {achievement.description}
+                        </p>
+                      )}
+                      {achievement.organization && (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {achievement.organization}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8">
+                <Trophy className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">Досягнень немає</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Вкладка Цілі */}
+        {activeTab === 'goals' && (
+          <div className="space-y-3">
+            {goals.length > 0 ? (
+              goals.slice(0, 6).map((goal) => (
+                <div key={goal.id} className="p-4 border rounded-lg hover:border-green-300 transition-colors">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                      <Target className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-sm mb-2">{goal.goal}</h4>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        <Badge className={`text-xs ${getStatusColor(goal.status)} flex items-center gap-1`}>
+                          {getStatusIcon(goal.status)}
+                          {goal.status}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {goal.priority}
+                        </Badge>
+                        <Badge variant="secondary" className="text-xs">
+                          Прогрес: {goal.progress}%
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-2">
+                        Дедлайн: {formatDate(goal.deadline)}
+                      </div>
+                      {goal.description && (
+                        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                          {goal.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8">
+                <Target className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">Цілей немає</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Вкладка Навички */}
+        {activeTab === 'skills' && (
+          <div className="space-y-4">
+            {/* Навички студента */}
+            {(student.skills && student.skills.length > 0) ? (
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-muted-foreground">
+                  <Code className="h-4 w-4" />
+                  Навички
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {student.skills.map((skill, index) => (
+                    <Badge key={index} variant="secondary" className="text-xs px-2 py-0.5">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-4">
+                <Code className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">Навички не вказані</p>
+              </div>
+            )}
+
+            {/* Інтереси */}
+            {(student.interests && student.interests.length > 0) && (
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-muted-foreground">
+                  <Star className="h-4 w-4" />
+                  Інтереси
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {student.interests.map((interest, index) => (
+                    <Badge key={index} variant="outline" className="text-xs px-2 py-0.5">
+                      {interest}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Технології з проєктів */}
+            {projects.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-muted-foreground">
+                  <Layers className="h-4 w-4" />
+                  Використані технології
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {Array.from(
+                    new Set(projects.flatMap(project => project.technologies || []))
+                  ).map((tech, index) => (
+                    <Badge key={index} className="bg-blue-100 text-blue-800 border-blue-200 px-2 py-0.5 text-xs">
+                      {tech}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Повертаємо відповідну версію
+  return isMobile ? <MobileModal /> : <DesktopModal />;
+}
 
 export default StudentProfileModal;

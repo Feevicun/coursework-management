@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
+import { toast } from 'sonner';
 
 interface TeacherComment {
   id: string;
@@ -93,7 +94,28 @@ interface ProjectData {
   teacherId: string;
   status: 'active' | 'completed' | 'behind';
   createdAt: string;
+  confirmedAt?: string;
+  applicationId?: number;
 }
+
+// Інтерфейс для даних з teacher_students
+// interface TeacherStudentData {
+//   id: number;
+//   teacher_id: number;
+//   student_id: number;
+//   student_name: string;
+//   student_email: string;
+//   work_type: 'coursework' | 'diploma' | 'practice';
+//   work_title: string;
+//   start_date: string;
+//   deadline: string;
+//   supervisor: string;
+//   program: string;
+//   year: string;
+//   status: string;
+//   confirmed_at: string;
+//   application_id?: number;
+// }
 
 // Компонент для відображення історії версій
 const FileHistoryModal = ({ 
@@ -109,7 +131,7 @@ const FileHistoryModal = ({
   currentUser: UserData;
   onRestoreVersion: (version: FileVersion) => void;
 }) => {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
 
   if (!isOpen) return null;
 
@@ -133,7 +155,7 @@ const FileHistoryModal = ({
         <div className="flex items-center justify-between p-4 border-b">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <History className="w-5 h-5" />
-            {t('thesis.fileHistory.title')}
+            Історія версій файлу
           </h3>
           <Button variant="ghost" size="sm" onClick={onClose}>
             ×
@@ -154,12 +176,12 @@ const FileHistoryModal = ({
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Badge variant={index === 0 ? "default" : "outline"}>
-                      {t('thesis.fileHistory.version')} {version.version}
-                      {index === 0 && ` (${t('thesis.fileHistory.currentVersion')})`}
+                      Версія {version.version}
+                      {index === 0 && ` (Поточна версія)`}
                     </Badge>
                     {version.uploadedBy === currentUser.name && (
                       <Badge variant="secondary" className="text-xs">
-                        {t('thesis.fileHistory.yourVersion')}
+                        Ваша версія
                       </Badge>
                     )}
                   </div>
@@ -183,7 +205,7 @@ const FileHistoryModal = ({
                     </div>
                     {version.changes && (
                       <div className="mt-2 text-xs text-gray-600 bg-white p-2 rounded border">
-                        <strong>{t('thesis.fileHistory.changes')}:</strong> {version.changes}
+                        <strong>Зміни:</strong> {version.changes}
                       </div>
                     )}
                   </div>
@@ -218,8 +240,8 @@ const FileHistoryModal = ({
 
         <div className="p-4 border-t bg-gray-50">
           <div className="text-sm text-gray-600">
-            <p>• {t('thesis.fileHistory.totalVersions')}: {fileHistory.length}</p>
-            <p>• {t('thesis.fileHistory.lastChange')}: {fileHistory[0] ? formatDate(fileHistory[0].uploadDate) : t('thesis.common.none')}</p>
+            <p>• Всього версій: {fileHistory.length}</p>
+            <p>• Остання зміна: {fileHistory[0] ? formatDate(fileHistory[0].uploadDate) : 'Немає'}</p>
           </div>
         </div>
       </div>
@@ -232,28 +254,27 @@ const WelcomeScreen = ({ onSelectProject, loading }: {
   onSelectProject: (type: 'diploma' | 'coursework' | 'practice') => void;
   loading: boolean;
 }) => {
-  const { t } = useTranslation();
 
   const projectOptions = [
     {
       type: 'diploma' as const,
       icon: GraduationCap,
-      title: t('welcome.diploma.title'),
-      description: t('welcome.diploma.description'),
+      title: 'Дипломний проєкт',
+      description: 'Розробка комплексного наукового дослідження',
       color: 'bg-[var(--muted)]'
     },
     {
       type: 'coursework' as const,
       icon: BookOpen,
-      title: t('welcome.coursework.title'),
-      description: t('welcome.coursework.description'),
+      title: 'Курсова робота',
+      description: 'Навчально-дослідницька робота за темою курсу',
       color: 'bg-[var(--muted)]'
     },
     {
       type: 'practice' as const,
       icon: Briefcase,
-      title: t('welcome.practice.title'),
-      description: t('welcome.practice.description'),
+      title: 'Звіт з практики',
+      description: 'Документація пройденої навчальної практики',
       color: 'bg-[var(--muted)]'
     }
   ];
@@ -262,10 +283,10 @@ const WelcomeScreen = ({ onSelectProject, loading }: {
     <div className="max-w-4xl mx-auto py-12 px-4">
       <div className="text-center mb-12">
         <h1 className="text-3xl font-bold text-[var(--foreground)] mb-4">
-          {t('welcome.heading')}
+          Керування науковими роботами
         </h1>
         <p className="text-lg text-[var(--muted-foreground)]">
-          {t('welcome.subheading')}
+          Оберіть тип роботи для початку роботи
         </p>
       </div>
 
@@ -296,10 +317,10 @@ const WelcomeScreen = ({ onSelectProject, loading }: {
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      {t('thesis.common.loading')}
+                      Завантаження...
                     </>
                   ) : (
-                    t('welcome.startButton')
+                    'Почати роботу'
                   )}
                 </Button>
               </CardContent>
@@ -314,31 +335,31 @@ const WelcomeScreen = ({ onSelectProject, loading }: {
             <div className="text-center mb-8">
               <FileText className="w-10 h-10 text-[var(--muted-foreground)] mx-auto mb-3" />
               <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">
-                {t('welcome.help.title')}
+                Довідка
               </h3>
               <p className="text-[var(--muted-foreground)] text-base">
-                {t('welcome.help.subtitle')}
+                Як працювати з системою керування науковими роботами
               </p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-8 text-left px-4 md:px-12">
               <div>
-                <h4 className="font-medium text-[var(--foreground)] mb-2">{t('welcome.howItWorks.title')}</h4>
+                <h4 className="font-medium text-[var(--foreground)] mb-2">Як це працює</h4>
                 <ul className="space-y-1 text-sm text-[var(--muted-foreground)]">
-                  <li>• {t('welcome.howItWorks.step1')}</li>
-                  <li>• {t('welcome.howItWorks.step2')}</li>
-                  <li>• {t('welcome.howItWorks.step3')}</li>
-                  <li>• {t('welcome.howItWorks.step4')}</li>
+                  <li>• Оберіть тип роботи та створіть проєкт</li>
+                  <li>• Завантажуйте файли для кожного розділу</li>
+                  <li>• Отримуйте коментарі від керівника</li>
+                  <li>• Відстежуйте прогрес виконання</li>
                 </ul>
               </div>
 
               <div>
-                <h4 className="font-medium text-[var(--foreground)] mb-2">{t('welcome.tips.title')}</h4>
+                <h4 className="font-medium text-[var(--foreground)] mb-2">Поради</h4>
                 <ul className="space-y-1 text-sm text-[var(--muted-foreground)]">
-                  <li>• {t('welcome.tips.tip1')}</li>
-                  <li>• {t('welcome.tips.tip2')}</li>
-                  <li>• {t('welcome.tips.tip3')}</li>
-                  <li>• {t('welcome.tips.tip4')}</li>
+                  <li>• Регулярно зберігайте свою роботу</li>
+                  <li>• Описуйте зміни при оновленні файлів</li>
+                  <li>• Перевіряйте коментарі керівника</li>
+                  <li>• Дотримуйтесь дедлайнів</li>
                 </ul>
               </div>
             </div>
@@ -350,7 +371,6 @@ const WelcomeScreen = ({ onSelectProject, loading }: {
 };
 
 const ThesisTracker = () => {
-  const { t } = useTranslation();
   const location = useLocation();
 
   const getQueryParam = (param: string) => {
@@ -381,7 +401,44 @@ const ThesisTracker = () => {
   // Функція для форматування дати
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'Не вказано';
-    return new Date(dateString).toLocaleDateString('uk-UA');
+    return new Date(dateString).toLocaleDateString('uk-UA', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  };
+
+  // Функції для отримання назв глав
+  const getDefaultChapterTitle = (key: string): string => {
+    const defaultTitles: Record<string, string> = {
+      'introduction': 'Вступ',
+      'literatureReview': 'Огляд літератури',
+      'methodology': 'Методологія дослідження',
+      'analysis': 'Аналіз результатів',
+      'conclusion': 'Висновки та рекомендації',
+      'research': 'Експериментальна частина',
+      'results': 'Результати дослідження',
+      'discussion': 'Обговорення результатів',
+      'tasks': 'Завдання практики',
+      'process': 'Хід виконання роботи'
+    };
+    return defaultTitles[key] || key;
+  };
+
+  const getDefaultChapterDescription = (key: string): string => {
+    const defaultDescriptions: Record<string, string> = {
+      'introduction': 'Актуальність, мета та завдання дослідження',
+      'literatureReview': 'Огляд наукових джерел та літератури',
+      'methodology': 'Методи та підходи дослідження',
+      'analysis': 'Аналіз отриманих результатів',
+      'conclusion': 'Основні висновки та рекомендації',
+      'research': 'Проведення експериментів та досліджень',
+      'results': 'Представлення отриманих результатів',
+      'discussion': 'Аналіз та обговорення результатів',
+      'tasks': 'Опис завдань практики',
+      'process': 'Опис процесу виконання роботи'
+    };
+    return defaultDescriptions[key] || 'Опис розділу';
   };
 
   // Функції для роботи з API
@@ -441,13 +498,84 @@ const ThesisTracker = () => {
     }
   };
 
+  // Функція для отримання поточного user_id
+  const getCurrentUserId = (): string | null => {
+    if (typeof window !== 'undefined') {
+      const currentUser = localStorage.getItem('currentUser') || 
+                         sessionStorage.getItem('currentUser');
+      
+      if (currentUser) {
+        try {
+          const userData = JSON.parse(currentUser);
+          if (userData.id) {
+            return userData.id.toString();
+          }
+        } catch {
+          // Ігноруємо помилку парсингу
+        }
+      }
+      
+      return localStorage.getItem('userId') || 
+             sessionStorage.getItem('userId') ||
+             localStorage.getItem('user_id') ||
+             sessionStorage.getItem('user_id');
+    }
+    return null;
+  };
+
+  // Функція для завантаження проекту з teacher_students
+  const loadProjectFromTeacherStudents = async (): Promise<ProjectData | null> => {
+    try {
+      const currentUserId = getCurrentUserId();
+      if (!currentUserId) {
+        console.log('❌ No current user ID found');
+        return null;
+      }
+
+      console.log('🔄 Loading project from teacher_students for user:', currentUserId);
+
+      // Завантажуємо дані з teacher_students для поточного студента
+      const teacherStudentData = await safeFetch(`/api/teacher-students/current`);
+      
+      console.log('📋 Teacher student data response:', teacherStudentData);
+
+      if (teacherStudentData && teacherStudentData.id) {
+        console.log('✅ Found project in teacher_students:', teacherStudentData);
+        
+        const projectData: ProjectData = {
+          id: teacherStudentData.id.toString(),
+          projectType: teacherStudentData.work_type === 'diploma' ? 'diploma' : 
+                      teacherStudentData.work_type === 'coursework' ? 'coursework' : 'practice',
+          workTitle: teacherStudentData.work_title || 'Назва проекту',
+          supervisor: teacherStudentData.supervisor || 'Викладач',
+          startDate: teacherStudentData.start_date || new Date().toISOString().split('T')[0],
+          deadline: teacherStudentData.deadline || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          studentId: teacherStudentData.student_id?.toString() || undefined,
+          teacherId: teacherStudentData.teacher_id?.toString() || 'teacher-1',
+          status: teacherStudentData.status === 'active' ? 'active' : 
+                 teacherStudentData.status === 'completed' ? 'completed' : 'behind',
+          createdAt: teacherStudentData.confirmed_at || new Date().toISOString(),
+          confirmedAt: teacherStudentData.confirmed_at,
+          applicationId: teacherStudentData.application_id
+        };
+        
+        console.log('📦 Processed project data:', projectData);
+        return projectData;
+      } else {
+        console.log('❌ No project found in teacher_students');
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error loading project from teacher_students:', error);
+      return null;
+    }
+  };
+
   // Функція для завантаження проекту з localStorage
   const loadProjectFromLocalStorage = (): ProjectData | null => {
     try {
       const studentProjects = JSON.parse(localStorage.getItem('studentProjects') || '[]');
-      const currentUserId = localStorage.getItem('userId') || 
-                           localStorage.getItem('user_id') || 
-                           JSON.parse(localStorage.getItem('currentUser') || '{}').id;
+      const currentUserId = getCurrentUserId();
       
       if (!currentUserId) return null;
 
@@ -463,12 +591,48 @@ const ThesisTracker = () => {
     }
   };
 
+  // Функція для завантаження глав з БД
+  const loadChaptersFromDatabase = async (projectType: string): Promise<ChapterData[]> => {
+    try {
+      const response = await safeFetch(`/api/user-chapters?projectType=${projectType}`);
+      
+      if (response && Array.isArray(response)) {
+        console.log(`📋 Loaded ${response.length} chapters from database for project type: ${projectType}`);
+        return response.map((chapter: any) => ({
+          id: chapter.id,
+          key: chapter.chapter_key,
+          progress: chapter.progress || 0,
+          status: chapter.status as 'completed' | 'review' | 'inProgress' | 'pending',
+          studentNote: chapter.student_note || '',
+          uploadedFile: chapter.uploaded_file_name ? {
+            name: chapter.uploaded_file_name,
+            uploadDate: chapter.uploaded_file_date || new Date().toISOString(),
+            size: chapter.uploaded_file_size || '0 KB',
+            currentVersion: 1
+          } : undefined,
+          teacherComments: chapter.teacher_comments || [],
+          fileHistory: chapter.file_history || [],
+          startDate: chapter.project_start_date,
+          deadline: chapter.project_deadline,
+          supervisor: chapter.supervisor,
+          workTitle: chapter.project_title
+        }));
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error loading chapters from database:', error);
+      return [];
+    }
+  };
+
   // Функція для завантаження глав з localStorage
   const loadChaptersFromLocalStorage = (projectType: string): ChapterData[] => {
     try {
       const storedChapters = JSON.parse(localStorage.getItem(`chapters_${projectType}`) || '[]');
       
       if (storedChapters.length > 0) {
+        console.log(`📋 Loaded ${storedChapters.length} chapters from localStorage for project type: ${projectType}`);
         return storedChapters;
       }
 
@@ -643,30 +807,65 @@ const ThesisTracker = () => {
   };
 
   // Функція для завантаження даних проекту
-  const loadProjectData = async (type: 'diploma' | 'coursework' | 'practice', projectData?: ProjectData) => {
+  const loadProjectData = async (type?: 'diploma' | 'coursework' | 'practice', projectData?: ProjectData) => {
     try {
-      setProjectType(type);
-      
       let projectInfo: ProjectData | null = projectData || null;
+      let detectedType = type;
       
       // Якщо дані проекту не передані, завантажуємо їх
       if (!projectInfo) {
         try {
-          const response = await apiRequest('/user-project');
-          projectInfo = response;
+          // Спочатку пробуємо завантажити з teacher_students
+          projectInfo = await loadProjectFromTeacherStudents();
+          
+          if (projectInfo) {
+            detectedType = projectInfo.projectType;
+            console.log('🎯 Using project type from teacher_students:', detectedType);
+          } else {
+            // Fallback до старого методу
+            console.log('⚠️ No project found in teacher_students, trying user-project API');
+            const response = await apiRequest('/user-project');
+            projectInfo = response;
+            if (projectInfo) {
+              detectedType = projectInfo.projectType;
+            }
+          }
         } catch {
           console.warn('API project loading failed, trying localStorage');
           projectInfo = loadProjectFromLocalStorage();
+          if (projectInfo) {
+            detectedType = projectInfo.projectType;
+          }
         }
       }
+
+      // Якщо тип проекту не визначено, використовуємо переданий або поточний
+      if (!detectedType && projectType) {
+        detectedType = projectType;
+      }
+
+      if (!detectedType) {
+        console.log('❌ No project type determined, showing welcome screen');
+        setProjectType(null);
+        setChapters([]);
+        return;
+      }
+
+      console.log('🚀 Setting project type:', detectedType);
+      setProjectType(detectedType);
 
       // Завантажуємо глави для цього типу проекту
       let chaptersResponse: ChapterData[] = [];
       try {
-        chaptersResponse = await apiRequest(`/user-chapters?projectType=${type}`);
+        chaptersResponse = await loadChaptersFromDatabase(detectedType);
+        
+        if (chaptersResponse.length === 0) {
+          console.warn('No chapters found in database, using localStorage');
+          chaptersResponse = loadChaptersFromLocalStorage(detectedType);
+        }
       } catch {
         console.warn('API chapters loading failed, using localStorage');
-        chaptersResponse = loadChaptersFromLocalStorage(type);
+        chaptersResponse = loadChaptersFromLocalStorage(detectedType);
       }
       
       // Завантажуємо коментарі та історію файлів для кожної глави
@@ -674,15 +873,15 @@ const ThesisTracker = () => {
         chaptersResponse.map(async (chapter: ChapterData) => {
           try {
             const [comments, fileHistory] = await Promise.all([
-              safeFetch(`/api/teacher-comments?projectType=${type}&chapterKey=${chapter.key}`),
-              safeFetch(`/api/file-history?projectType=${type}&chapterKey=${chapter.key}`)
+              safeFetch(`/api/teacher-comments?projectType=${detectedType}&chapterKey=${chapter.key}`),
+              safeFetch(`/api/file-history?projectType=${detectedType}&chapterKey=${chapter.key}`)
             ]);
             
             return { 
               ...chapter, 
               teacherComments: comments || [],
               fileHistory: fileHistory || [],
-              // Додаємо дані проекту до кожної глави
+              // Додаємо актуальні дані проекту до кожної глави
               startDate: projectInfo?.startDate,
               deadline: projectInfo?.deadline,
               supervisor: projectInfo?.supervisor,
@@ -703,15 +902,52 @@ const ThesisTracker = () => {
         })
       );
       
+      console.log(`📚 Loaded ${chaptersWithDetails.length} chapters with project data`);
       setChapters(chaptersWithDetails);
       
       // Зберігаємо глави в localStorage для майбутнього використання
-      localStorage.setItem(`chapters_${type}`, JSON.stringify(chaptersWithDetails));
+      localStorage.setItem(`chapters_${detectedType}`, JSON.stringify(chaptersWithDetails));
       
       // Оновлюємо URL без перезавантаження
-      window.history.replaceState({}, '', `/tracker?type=${type}`);
+      window.history.replaceState({}, '', `/tracker?type=${detectedType}`);
     } catch (error) {
       console.error('Error loading project data:', error);
+    }
+  };
+
+  // Функція для обробки події оновлення студента
+  const handleStudentUpdated = async (event: Event) => {
+    const customEvent = event as CustomEvent;
+    console.log('🔄 Student updated event received:', customEvent.detail);
+    
+    // Показуємо loading
+    setLoading(true);
+    
+    try {
+      // Перезавантажуємо дані проекту
+      const teacherStudentProject = await loadProjectFromTeacherStudents();
+      
+      if (teacherStudentProject) {
+        console.log('🎉 Loading updated project data:', teacherStudentProject);
+        await loadProjectData(teacherStudentProject.projectType, teacherStudentProject);
+        
+        // Показуємо сповіщення про успішне оновлення
+        toast.success('Дані проекту оновлено!', {
+          description: `Тема: ${teacherStudentProject.workTitle}\nКерівник: ${teacherStudentProject.supervisor}`
+        });
+      } else {
+        console.log('❌ No updated project found after student update');
+        // Спробуємо перезавантажити з localStorage
+        const localProject = loadProjectFromLocalStorage();
+        if (localProject) {
+          await loadProjectData(localProject.projectType, localProject);
+        }
+      }
+    } catch (error) {
+      console.error('Error handling student update:', error);
+      toast.error('Помилка оновлення даних проекту');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -720,12 +956,14 @@ const ThesisTracker = () => {
     const initializeData = async () => {
       try {
         setLoading(true);
+        console.log('🎬 Initializing ThesisTracker data...');
 
         // Завантажуємо дані користувача
         let userResponse;
         try {
           userResponse = await apiRequest('/current-user');
           setCurrentUser(userResponse.user);
+          console.log('👤 Current user:', userResponse.user);
         } catch {
           console.warn('API user request failed, using localStorage fallback');
           // Fallback: отримуємо користувача з localStorage
@@ -738,7 +976,18 @@ const ThesisTracker = () => {
           });
         }
 
-        // Спершу пробуємо завантажити проект з localStorage
+        // Спершу пробуємо завантажити проект з teacher_students
+        const teacherStudentProject = await loadProjectFromTeacherStudents();
+        
+        if (teacherStudentProject) {
+          console.log('📋 Loaded project from teacher_students:', teacherStudentProject);
+          await loadProjectData(teacherStudentProject.projectType, teacherStudentProject);
+          return;
+        }
+
+        console.log('🔄 No project in teacher_students, checking other sources...');
+
+        // Потім пробуємо завантажити проект з localStorage
         const localProject = loadProjectFromLocalStorage();
         
         if (localProject) {
@@ -782,15 +1031,30 @@ const ThesisTracker = () => {
 
   // Слухач подій для оновлення проекту
   useEffect(() => {
-    const handleProjectsUpdated = () => {
-      const localProject = loadProjectFromLocalStorage();
-      if (localProject && localProject.projectType !== projectType) {
-        loadProjectData(localProject.projectType, localProject);
+    const handleProjectsUpdated = async () => {
+      console.log('🔄 Projects updated event received, reloading project data...');
+      
+      // Спершу пробуємо завантажити проект з teacher_students
+      const teacherStudentProject = await loadProjectFromTeacherStudents();
+      
+      if (teacherStudentProject && teacherStudentProject.projectType !== projectType) {
+        await loadProjectData(teacherStudentProject.projectType, teacherStudentProject);
+      } else {
+        // Fallback до localStorage
+        const localProject = loadProjectFromLocalStorage();
+        if (localProject && localProject.projectType !== projectType) {
+          await loadProjectData(localProject.projectType, localProject);
+        }
       }
     };
 
     window.addEventListener('projectsUpdated', handleProjectsUpdated);
-    return () => window.removeEventListener('projectsUpdated', handleProjectsUpdated);
+    window.addEventListener('studentUpdated', handleStudentUpdated);
+    
+    return () => {
+      window.removeEventListener('projectsUpdated', handleProjectsUpdated);
+      window.removeEventListener('studentUpdated', handleStudentUpdated);
+    };
   }, [projectType]);
 
   const handleSelectProject = async (type: 'diploma' | 'coursework' | 'practice') => {
@@ -805,18 +1069,22 @@ const ThesisTracker = () => {
       } catch {
         console.warn('API project creation failed, using localStorage');
         // Створюємо проект в localStorage
-        const currentUserId = localStorage.getItem('userId') || 
-                             localStorage.getItem('user_id') || 
-                             JSON.parse(localStorage.getItem('currentUser') || '{}').id;
+        const currentUserId = getCurrentUserId();
         
         const newProject: ProjectData = {
           id: `project-${Date.now()}`,
           projectType: type,
-          workTitle: `${type === 'coursework' ? 'Курсова робота' : type === 'diploma' ? 'Дипломна робота' : 'Навчальна практика'}`,
-          supervisor: 'Викладач',
+          workTitle: type === 'diploma' ? 'Розробка системи моніторингу якості повітря в умовах міського середовища' : 
+                 type === 'coursework' ? 'Аналіз ефективності алгоритмів машинного навчання для класифікації текстів' : 
+                 'Звіт з навчальної практики: впровадження IT-рішень у компанії "ТехноСервіс"',
+          supervisor: type === 'diploma' ? 'Проф. Іванов І.І.' : 
+                     type === 'coursework' ? 'Доц. Петрова О.В.' : 
+                     'Кер. практики Сидоренко М.П.',
           startDate: new Date().toISOString().split('T')[0],
-          deadline: calculateDeadline(type),
-          studentId: currentUserId,
+          deadline: type === 'diploma' ? new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : 
+                   type === 'coursework' ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : 
+                   new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          studentId: currentUserId || undefined,
           teacherId: 'teacher-1',
           status: 'active',
           createdAt: new Date().toISOString()
@@ -836,22 +1104,6 @@ const ThesisTracker = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Функція для розрахунку дедлайну
-  const calculateDeadline = (type: 'diploma' | 'coursework' | 'practice'): string => {
-    const now = new Date();
-    const deadline = new Date();
-    
-    if (type === 'coursework') {
-      deadline.setMonth(now.getMonth() + 3);
-    } else if (type === 'diploma') {
-      deadline.setMonth(now.getMonth() + 6);
-    } else {
-      deadline.setMonth(now.getMonth() + 1);
-    }
-    
-    return deadline.toISOString().split('T')[0];
   };
 
   const updateChapter = async (chapterKey: string, updates: any) => {
@@ -904,7 +1156,7 @@ const ThesisTracker = () => {
       uploadedBy: currentUser.name,
       userId: currentUser.id,
       version: (chapter.fileHistory?.length || 0) + 1,
-      changes: changes || t('thesis.alerts.firstUpload')
+      changes: changes || 'Перше завантаження файлу'
     };
 
     // Оновлюємо історію файлів
@@ -966,7 +1218,7 @@ const ThesisTracker = () => {
 
   const handleRestoreVersion = async (chapterId: number, version: FileVersion) => {
     try {
-      alert(t('thesis.alerts.restoreVersion', { version: version.version, fileName: version.fileName }));
+      alert(`Відновлюємо версію ${version.version} файлу "${version.fileName}"`);
       
       // Оновлюємо поточний файл глави
       const chapter = chapters.find(ch => ch.id === chapterId);
@@ -1180,13 +1432,43 @@ const ThesisTracker = () => {
     chapters.reduce((sum, ch) => sum + ch.progress, 0) / chapters.length
   ) : 0;
 
+  // Отримуємо актуальні дані проекту з першої глави
+  const getProjectInfo = () => {
+    if (chapters.length > 0 && chapters[0].supervisor) {
+      return {
+        supervisor: chapters[0].supervisor,
+        workTitle: chapters[0].workTitle,
+        startDate: chapters[0].startDate,
+        deadline: chapters[0].deadline
+      };
+    }
+    
+    // Fallback до статичних даних
+    return {
+      supervisor: projectType === 'diploma' ? 'Проф. Іванов І.І.' : 
+                 projectType === 'coursework' ? 'Доц. Петрова О.В.' : 
+                 'Кер. практики Сидоренко М.П.',
+      workTitle: projectType === 'diploma' ? 'Розробка системи моніторингу якості повітря в умовах міського середовища' : 
+                projectType === 'coursework' ? 'Аналіз ефективності алгоритмів машинного навчання для класифікації текстів' : 
+                'Звіт з навчальної практики: впровадження IT-рішень у компанії "ТехноСервіс"',
+      startDate: projectType === 'diploma' ? '2024-09-15' : 
+                projectType === 'coursework' ? '2024-02-01' : 
+                '2024-06-10',
+      deadline: projectType === 'diploma' ? '2025-05-15' : 
+               projectType === 'coursework' ? '2024-05-25' : 
+               '2024-06-30'
+    };
+  };
+
+  const projectInfo = getProjectInfo();
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
           <p className="text-[var(--muted-foreground)]">
-            {t('thesis.common.loading')}
+            Завантаження...
           </p>
         </div>
       </div>
@@ -1213,15 +1495,14 @@ const ThesisTracker = () => {
               <Card className="bg-[var(--card)] text-[var(--card-foreground)]">
                 <CardHeader>
                   <CardTitle className="text-lg md:text-xl">
-                    {chapters.length > 0 && chapters[0].workTitle 
-                      ? `${t(`thesis.projectTypes.${projectType}`)} - ${chapters[0].workTitle}`
-                      : t(`thesis.projectTypes.${projectType}`)
-                    }
+                    {projectType === 'diploma' ? 'Дипломний проєкт' : 
+                     projectType === 'coursework' ? 'Курсова робота' : 
+                     'Звіт з практики'}
                   </CardTitle>
                   <CardDescription className="text-sm text-[var(--muted-foreground)] mt-1">
-                    {chapters.length > 0 && chapters[0].supervisor 
-                      ? `${t('thesis.supervisor')}: ${chapters[0].supervisor}`
-                      : t('thesis.supervisor')
+                    {projectInfo.supervisor 
+                      ? `Керівник: ${projectInfo.supervisor}`
+                      : 'Керівник'
                     }
                   </CardDescription>
                 </CardHeader>
@@ -1229,38 +1510,40 @@ const ThesisTracker = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm">
-                        <span className="font-medium">{t('thesis.startDate')}:</span>{" "}
-                        {chapters.length > 0 && chapters[0].startDate 
-                          ? formatDate(chapters[0].startDate)
-                          : "Не вказано"
-                        }
+                        <span className="font-medium">Керівник:</span>{" "}
+                        {projectInfo.supervisor}
                       </p>
                       <p className="text-sm">
-                        <span className="font-medium">{t('thesis.deadline')}:</span>{" "}
-                        {chapters.length > 0 && chapters[0].deadline 
-                          ? formatDate(chapters[0].deadline)
-                          : "Не вказано"
-                        }
+                        <span className="font-medium">Тема роботи:</span>{" "}
+                        {projectInfo.workTitle}
+                      </p>
+                      <p className="text-sm">
+                        <span className="font-medium">Початок:</span>{" "}
+                        {formatDate(projectInfo.startDate)}
+                      </p>
+                      <p className="text-sm">
+                        <span className="font-medium">Дедлайн:</span>{" "}
+                        {formatDate(projectInfo.deadline)}
                       </p>
                     </div>
                     <div className="text-right">
                       <div className="text-3xl font-bold text-[var(--primary)]">{totalProgress}%</div>
-                      <p className="text-sm text-[var(--muted-foreground)]">{t('thesis.progress')}</p>
+                      <p className="text-sm text-[var(--muted-foreground)]">Прогрес</p>
                     </div>
                   </div>
                   <Progress value={totalProgress} className="h-2 bg-[var(--muted)]" />
                   <div className="flex gap-3 flex-wrap">
                     <Button className="bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-foreground)] hover:text-[var(--primary)]">
                       <MessageSquare className="w-4 h-4 mr-2" />
-                      {t('indexs.chatWithSupervisor')}
+                      Чат з керівником
                     </Button>
                     <Button variant="outline" className="border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--secondary)] hover:text-[var(--secondary-foreground)]">
                       <Calendar className="w-4 h-4 mr-2" />
-                      {t('indexs.planner')}
+                      Планувальник
                     </Button>
                     <Button variant="outline" className="border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--secondary)] hover:text-[var(--secondary-foreground)]">
                       <Download className="w-4 h-4 mr-2" />
-                      {t('thesis.export')}
+                      Експорт звіту
                     </Button>
                   </div>
                 </CardContent>
@@ -1268,7 +1551,7 @@ const ThesisTracker = () => {
 
               <Card className="bg-[var(--card)] text-[var(--card-foreground)]">
                 <CardHeader>
-                  <CardTitle>{t('indexs.projectProgress')}</CardTitle>
+                  <CardTitle>Прогрес проєкту</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {chapters.map((chapter) => (
@@ -1279,7 +1562,7 @@ const ThesisTracker = () => {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1">
                               <p className="font-medium text-[var(--foreground)]">
-                                {t(`thesis.chapters.${chapter.key}`)}
+                                {getDefaultChapterTitle(chapter.key)}
                               </p>
                               {(chapter.teacherComments?.length || 0) > 0 && (
                                 <Badge variant="outline" className="text-xs">
@@ -1290,12 +1573,12 @@ const ThesisTracker = () => {
                               {(chapter.fileHistory?.length || 0) > 0 && (
                                 <Badge variant="outline" className="text-xs">
                                   <History className="w-3 h-3 mr-1" />
-                                  {chapter.fileHistory?.length || 0} {t('thesis.common.versions')}
+                                  {chapter.fileHistory?.length || 0} версій
                                 </Badge>
                               )}
                             </div>
                             <p className="text-sm text-[var(--muted-foreground)]">
-                              {t(`thesis.chapterDescriptions.${chapter.key}`)}
+                              {getDefaultChapterDescription(chapter.key)}
                             </p>
                           </div>
                         </div>
@@ -1313,7 +1596,7 @@ const ThesisTracker = () => {
                               <div>
                                 <p className="text-sm font-medium">{chapter.uploadedFile.name}</p>
                                 <p className="text-xs text-[var(--muted-foreground)]">
-                                  {chapter.uploadedFile.size} • {t('thesis.fileHistory.version')} {chapter.uploadedFile.currentVersion}
+                                  {chapter.uploadedFile.size} • Версія {chapter.uploadedFile.currentVersion}
                                 </p>
                               </div>
                             </div>
@@ -1326,7 +1609,7 @@ const ThesisTracker = () => {
                                   className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                                 >
                                   <History className="w-4 h-4 mr-1" />
-                                  {t('thesis.actions.viewHistory')}
+                                  Переглянути історію
                                 </Button>
                               )}
                               {chapter.status === 'review' && (
@@ -1355,7 +1638,7 @@ const ThesisTracker = () => {
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const changes = prompt(t('thesis.alerts.describeChangesOptional'));
+                                  const changes = prompt('Опишіть зміни в цій версії (необов\'язково):');
                                   handleFileUpload(chapter.id, file, changes || undefined);
                                 }
                               }}
@@ -1368,7 +1651,7 @@ const ThesisTracker = () => {
                             >
                               <label htmlFor={`file-upload-${chapter.id}`} className="flex items-center cursor-pointer">
                                 <FileText className="w-4 h-4 mr-1" />
-                                {t('thesis.actions.uploadFile')}
+                                Завантажити файл
                               </label>
                             </Button>
                           </div>
@@ -1381,7 +1664,7 @@ const ThesisTracker = () => {
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const changes = prompt(t('thesis.alerts.describeChanges')) || t('thesis.alerts.fileUpdate');
+                                  const changes = prompt('Опишіть зміни в цій версії:') || 'Оновлення файлу';
                                   handleFileUpload(chapter.id, file, changes);
                                 }
                               }}
@@ -1394,7 +1677,7 @@ const ThesisTracker = () => {
                             >
                               <label htmlFor={`file-update-${chapter.id}`} className="flex items-center cursor-pointer">
                                 <FileText className="w-4 h-4 mr-1" />
-                                {t('thesis.actions.updateFile')}
+                                Оновити файл
                               </label>
                             </Button>
                           </div>
@@ -1406,7 +1689,7 @@ const ThesisTracker = () => {
                             className="bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-foreground)] hover:text-[var(--primary)]"
                             onClick={() => handleSendForReview(chapter.id)}
                           >
-                            {t('thesis.actions.sendForReview')}
+                            Надіслати на перевірку
                           </Button>
                         )}
 
@@ -1418,7 +1701,7 @@ const ThesisTracker = () => {
                           className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                         >
                           <StickyNote className="w-4 h-4 mr-1" />
-                          {t('thesis.notes.myNotes')}
+                          Мої нотатки
                           {expandedNotes[chapter.id] ? <EyeOff className="w-3 h-3 ml-1" /> : <Eye className="w-3 h-3 ml-1" />}
                         </Button>
 
@@ -1430,7 +1713,7 @@ const ThesisTracker = () => {
                             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                           >
                             <MessageCircle className="w-4 h-4 mr-1" />
-                            {t('thesis.actions.viewComments')} ({chapter.teacherComments?.length || 0})
+                            Переглянути коментарі ({chapter.teacherComments?.length || 0})
                             {expandedComments[chapter.id] ? <EyeOff className="w-3 h-3 ml-1" /> : <Eye className="w-3 h-3 ml-1" />}
                           </Button>
                         )}
@@ -1441,7 +1724,7 @@ const ThesisTracker = () => {
                         <div className="bg-[var(--muted)]/30 p-4 rounded-lg border border-[var(--border)]">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="font-medium text-sm">
-                              {t('thesis.notes.myNotes')}
+                              Мої нотатки
                             </h4>
                             <Button
                               size="sm"
@@ -1450,8 +1733,8 @@ const ThesisTracker = () => {
                               className="text-xs"
                             >
                               {editingNotes[chapter.id] 
-                                ? t('thesis.notes.cancel')
-                                : t('thesis.notes.edit')
+                                ? 'Скасувати'
+                                : 'Редагувати'
                               }
                             </Button>
                           </div>
@@ -1470,7 +1753,7 @@ const ThesisTracker = () => {
                                     )
                                   );
                                 }}
-                                placeholder={t('thesis.notes.placeholder')}
+                                placeholder="Додайте свої нотатки до цього розділу..."
                                 className="min-h-[100px] bg-[var(--background)] border-[var(--border)]"
                               />
                               <Button
@@ -1482,7 +1765,7 @@ const ThesisTracker = () => {
                                 className="bg-[var(--primary)] text-[var(--primary-foreground)]"
                               >
                                 <Save className="w-3 h-3 mr-1" />
-                                {t('thesis.notes.save')}
+                                Зберегти
                               </Button>
                             </div>
                           ) : (
@@ -1493,7 +1776,7 @@ const ThesisTracker = () => {
                                 </div>
                               ) : (
                                 <p className="italic text-center py-4">
-                                  {t('thesis.notes.noNotes')}
+                                  Нотаток поки немає. Натисніть "Редагувати" щоб додати.
                                 </p>
                               )}
                             </div>
@@ -1505,17 +1788,17 @@ const ThesisTracker = () => {
                       {expandedComments[chapter.id] && (chapter.teacherComments?.length || 0) > 0 && (
                         <div className="bg-blue-50/30 border border-blue-200/50 p-4 rounded-lg">
                           <h4 className="font-medium text-sm mb-3 text-blue-900">
-                            {t('thesis.comments.teacherComments')}
+                            Коментарі викладача
                           </h4>
                           <div className="space-y-3">
                             {(chapter.teacherComments || []).map((comment) => (
                               <div key={comment.id} className="bg-[var(--background)] p-3 rounded border border-[var(--border)]">
                                 <div className="flex items-start justify-between mb-2">
                                   <Badge className={`text-xs ${getCommentBadgeStyle(comment.status)}`}>
-                                    {comment.status === 'success' && `✓ ${t('thesis.comments.approved')}`}
-                                    {comment.status === 'warning' && `⚠ ${t('thesis.comments.warning')}`}
-                                    {comment.status === 'error' && `✗ ${t('thesis.comments.needsImprovement')}`}
-                                    {comment.status === 'info' && `ℹ ${t('thesis.comments.information')}`}
+                                    {comment.status === 'success' && `✓ Схвалено`}
+                                    {comment.status === 'warning' && `⚠ Попередження`}
+                                    {comment.status === 'error' && `✗ Потребує доопрацювання`}
+                                    {comment.status === 'info' && `ℹ Інформація`}
                                   </Badge>
                                   <span className="text-xs text-[var(--muted-foreground)]">
                                     {comment.date}

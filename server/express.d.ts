@@ -13,7 +13,7 @@ declare global {
 declare namespace Express {
   export interface Request {
     user?: {
-      id: number;
+      userId: number;
       email: string;
       role: string;
       name: string;

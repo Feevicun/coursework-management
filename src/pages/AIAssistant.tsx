@@ -7,7 +7,6 @@ import {
   Search,
   CheckCircle,
   Copy,
-  RefreshCw,
   Sparkles,
   Crown,
   User,
@@ -23,13 +22,18 @@ import {
   Star,
   Mail,
   Clock,
-  ChevronDown,
-  ChevronUp,
   Info,
   Users,
   Calendar,
   Phone,
   Building,
+  Eye,
+  Maximize2,
+  Minimize2,
+  Award,
+  Check,
+  Info as InfoIcon,
+  Loader2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -39,12 +43,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
@@ -73,9 +72,40 @@ interface ApplicationFormData {
   student_year?: string;
   student_group?: string;
   student_id?: string;
+  workType: 'coursework' | 'diploma' | 'practice';
+  student_specialty_id?: number;
+  student_specialty_code?: string;
+  student_faculty_id?: number;
 }
 
 // Типи для пошуку викладачів
+interface AvailablePlaceDetail {
+  id: string;
+  type: 'coursework' | 'diploma' | 'practice';
+  availableSpots: number;
+  course: number;
+  specialty_id: number;
+  specialty_name?: string;
+  specialty_code?: string;
+  faculty_id?: number;
+  faculty_name?: string;
+  max_students?: number;
+  current_students?: number;
+  requirements?: string;
+  description?: string;
+  matchScore?: number;
+  isExactMatch?: boolean;
+  available_spots?: number;
+}
+
+interface TeacherAvailablePlaces {
+  totalAvailable: number;
+  coursework: number;
+  diploma: number;
+  practice?: number;
+  details?: AvailablePlaceDetail[];
+}
+
 interface TeacherMatch {
   teacher: {
     id: string;
@@ -83,6 +113,7 @@ interface TeacherMatch {
     title: string;
     department: string;
     faculty: string;
+    facultyId?: number;
     bio: string;
     avatarUrl: string | null;
     email: string;
@@ -118,6 +149,13 @@ interface TeacherMatch {
     directions: number;
     topics: number;
   };
+  availablePlaces?: TeacherAvailablePlaces;
+  studentFilters?: {
+    specialtyId?: number;
+    specialtyCode?: string;
+    course?: number;
+    facultyId?: number;
+  };
 }
 
 // Розширений тип для теми з рекомендованими викладачами
@@ -125,9 +163,15 @@ interface SuggestedTopicWithTeachers extends SuggestedTopic {
   teacherMatches?: TeacherMatch[];
   showTeachers?: boolean;
   error?: string;
+  workType?: 'coursework' | 'diploma' | 'practice';
+  originalTitle?: string;
+  topicComplexity?: 'beginner' | 'intermediate' | 'advanced';
+  estimatedTime?: string;
+  prerequisites?: string[];
+  technologies?: string[];
 }
 
-// Додамо тип для PremiumSuggestion
+// Тип для PremiumSuggestion
 interface PremiumSuggestion {
   id: string;
   type: string;
@@ -138,6 +182,9 @@ interface PremiumSuggestion {
   url?: string;
   work_type?: string;
   year?: number;
+  workType?: 'coursework' | 'diploma' | 'practice';
+  teacherId?: string;
+  teacherName?: string;
 }
 
 // Тип для інформації про студента
@@ -150,6 +197,16 @@ interface StudentInfo {
   group?: string;
   id?: string;
   bio?: string;
+  specialty_id?: number;
+  specialty_code?: string;
+  specialty_name?: string;
+  faculty_id?: number;
+  faculty_name?: string;
+}
+
+// Тип для детальної інформації про студента
+interface CompleteStudentInfo extends StudentInfo {
+  course?: number;
 }
 
 // Функція для отримання токену автентифікації
@@ -214,7 +271,27 @@ const getFacultyIdFromToken = (): number | null => {
   }
 };
 
-// Додайте цю функцію для отримання повних даних користувача
+// Функція для отримання назви факультету
+const getFacultyName = async (facultyId: number): Promise<string> => {
+  try {
+    const token = getAuthToken();
+    const response = await fetch(`/api/faculties/${facultyId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return data.faculty?.name || `Факультет #${facultyId}`;
+    }
+    return `Факультет #${facultyId}`;
+  } catch {
+    return `Факультет #${facultyId}`;
+  }
+};
+
+// Функція для отримання повних даних користувача
 const getCurrentUserWithFaculty = async (): Promise<{ faculty_id: number } | null> => {
   try {
     const token = getAuthToken();
@@ -250,28 +327,36 @@ const getCurrentUserWithFaculty = async (): Promise<{ faculty_id: number } | nul
   }
 };
 
-// Функція для отримання інформації про студента
-const getStudentInfo = async (): Promise<StudentInfo | null> => {
+// Функція для отримання повної інформації про студента
+const getCompleteStudentInfo = async (): Promise<CompleteStudentInfo | null> => {
   try {
-    // Спершу пробуємо отримати з localStorage (найшвидший спосіб)
+    // Спочатку пробуємо отримати з localStorage (оновленого з ProfilePage)
     try {
       const currentUser = localStorage.getItem('currentUser');
       if (currentUser) {
         const userData = JSON.parse(currentUser);
-        console.log('📋 Student data from localStorage:', userData);
         
-        // Перевіряємо, чи є коректне ім'я
-        if (userData.name && userData.name !== 'Студент' && userData.name.trim() !== '') {
-          return {
+        if (userData.name && userData.name.trim() !== '') {
+          console.log('📋 Дані студента з localStorage:', userData);
+          const completeInfo: CompleteStudentInfo = {
             name: userData.name,
             email: userData.email || '',
             phone: userData.phone || '',
             program: userData.program || userData.specialization || '',
             year: userData.year || userData.course || '',
+            course: userData.course ? parseInt(userData.course) : 
+                   userData.year ? parseInt(userData.year) : undefined,
             group: userData.group || '',
             id: userData.id || userData.userId || '',
-            bio: userData.bio || ''
+            bio: userData.bio || '',
+            specialty_id: userData.specialty_id || undefined,
+            specialty_code: userData.specialty_code || '',
+            specialty_name: userData.specialty_name || userData.specialty || '',
+            faculty_id: userData.faculty_id || undefined,
+            faculty_name: userData.faculty_name || userData.faculty || ''
           };
+          
+          return completeInfo;
         }
       }
     } catch {
@@ -285,88 +370,134 @@ const getStudentInfo = async (): Promise<StudentInfo | null> => {
       return null;
     }
 
-    console.log('🔍 Fetching student info from API...');
+    console.log('🔍 Fetching complete student info from API...');
     
-    const response = await fetch('/api/current-user', {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
+    // Спершу пробуємо /api/student/profile (як у ProfilePage)
+    let studentData = null;
+    
+    try {
+      const profileResponse = await fetch('/api/student/profile', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      console.log('📋 Full student info from API:', data);
-      
-      // Покращена логіка отримання імені
-      let studentName = '';
-      
-      // Пріоритети отримання імені
-      if (data.user?.full_name) studentName = data.user.full_name;
-      else if (data.user?.name) studentName = data.user.name;
-      else if (data.user?.first_name && data.user?.last_name) {
-        studentName = `${data.user.first_name} ${data.user.last_name}`.trim();
+      if (profileResponse.ok) {
+        const profileData = await profileResponse.json();
+        console.log('📋 Дані профілю студента з API:', profileData);
+        
+        studentData = {
+          id: profileData.id || profileData.user_id || "",
+          name: profileData.name || profileData.full_name || profileData.user?.name || "",
+          group: profileData.group || profileData.group_name || profileData.user?.group || "",
+          course: parseInt(profileData.course) || parseInt(profileData.year) || 1,
+          faculty: profileData.faculty || profileData.faculty_name || profileData.user?.faculty || "",
+          department: profileData.department || profileData.department_name || profileData.user?.department || "",
+          email: profileData.email || profileData.user?.email || "",
+          bio: profileData.bio || profileData.user?.bio || "",
+          phone: profileData.phone || profileData.user?.phone || "",
+          specialty: profileData.specialty || profileData.specialty_name || profileData.user?.specialty || "",
+          specialty_code: profileData.specialty_code || profileData.user?.specialty_code || "",
+          specialty_id: profileData.specialty_id || profileData.user?.specialty_id || undefined,
+          faculty_id: profileData.faculty_id || profileData.user?.faculty_id || undefined,
+          faculty_name: profileData.faculty || profileData.faculty_name || profileData.user?.faculty_name || ""
+        };
       }
-      else if (data.full_name) studentName = data.full_name;
-      else if (data.name) studentName = data.name;
-      else if (data.email) {
-        // Якщо імені немає, створюємо з email
-        const emailPart = data.email.split('@')[0];
-        studentName = emailPart.split('.').map((part: string) => 
-          part.charAt(0).toUpperCase() + part.slice(1)
-        ).join(' ');
-      } else {
-        studentName = 'Студент';
-      }
+    } catch (error) {
+      console.error('❌ Помилка при отриманні профілю з API:', error);
+    }
 
-      const studentInfo = {
-        name: studentName,
-        email: data.user?.email || data.email || '',
-        phone: data.user?.phone || data.phone || '',
-        program: data.user?.program?.name || data.program || data.user?.program_name || data.user?.specialization || '',
-        year: data.user?.year || data.year || data.user?.course || '',
-        group: data.user?.group || data.group || data.user?.student_group || data.student_group || '',
-        id: data.user?.id || data.id || data.userId || '',
-        bio: data.user?.bio || data.bio || ''
-      };
-
-      // ОНОВЛЮЄМО localStorage з новими даними
+    // Якщо не вдалося отримати з /api/student/profile, пробуємо /api/current-user
+    if (!studentData) {
       try {
-        localStorage.setItem('currentUser', JSON.stringify(studentInfo));
-        console.log('✅ Updated localStorage with student data:', studentInfo);
-      } catch {
-        console.log('⚠️ Could not update localStorage');
-      }
+        const response = await fetch('/api/current-user', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-      return studentInfo;
+        if (response.ok) {
+          const data = await response.json();
+          console.log('📋 Дані поточного користувача з API:', data);
+          
+          studentData = {
+            id: data.id || data.user_id || "",
+            name: data.user?.name || data.name || data.full_name || "",
+            group: data.user?.group || data.group || data.group_name || "",
+            course: parseInt(data.user?.course) || parseInt(data.course) || parseInt(data.year) || 1,
+            faculty: data.user?.faculty || data.faculty || data.faculty_name || "",
+            department: data.user?.department || data.department || data.department_name || "",
+            email: data.user?.email || data.email || "",
+            bio: data.user?.bio || data.bio || "",
+            phone: data.user?.phone || data.phone || "",
+            specialty: data.user?.specialty || data.specialty || data.specialty_name || "",
+            specialty_code: data.user?.specialty_code || data.specialty_code || "",
+            specialty_id: data.user?.specialty_id || data.specialty_id || undefined,
+            faculty_id: data.user?.faculty_id || data.faculty_id || undefined,
+            faculty_name: data.user?.faculty || data.faculty || data.faculty_name || ""
+          };
+        }
+      } catch (error) {
+        console.error('❌ Помилка при отриманні поточного користувача з API:', error);
+      }
     }
     
-    return null;
+    if (studentData) {
+      console.log('✅ Оброблені дані студента з API:', studentData);
+      
+      // Формуємо повну інформацію
+      const completeInfo: CompleteStudentInfo = {
+        name: studentData.name,
+        email: studentData.email,
+        phone: studentData.phone || '',
+        program: studentData.specialty || '',
+        year: studentData.course ? studentData.course.toString() : '',
+        course: studentData.course,
+        group: studentData.group || '',
+        id: studentData.id,
+        bio: studentData.bio || '',
+        specialty_id: studentData.specialty_id,
+        specialty_code: studentData.specialty_code || '',
+        specialty_name: studentData.specialty || '',
+        faculty_id: studentData.faculty_id,
+        faculty_name: studentData.faculty_name || studentData.faculty || ''
+      };
+
+      // Зберігаємо в localStorage для подальшого використання
+      try {
+        localStorage.setItem('currentUser', JSON.stringify(completeInfo));
+        console.log('✅ Оновлено localStorage з даними API');
+      } catch (e) {
+        console.error('Помилка збереження в localStorage:', e);
+      }
+      
+      return completeInfo;
+    } else {
+      console.log('❌ Дані студента не знайдено в API');
+      return null;
+    }
   } catch (error) {
-    console.error('❌ Error fetching student info:', error);
+    console.error('❌ Помилка отримання інформації студента:', error);
     return null;
   }
 };
 
-// Додайте цю функцію для отримання оновлених даних студента
-const getUpdatedStudentInfo = async (): Promise<StudentInfo | null> => {
+// Функція для отримання оновлених даних студента
+const getUpdatedStudentInfo = async (): Promise<CompleteStudentInfo | null> => {
   try {
-    // Спершу пробуємо отримати з localStorage
     try {
       const currentUser = localStorage.getItem('currentUser');
       if (currentUser) {
         const userData = JSON.parse(currentUser);
-        console.log('📋 Updated student data from localStorage:', userData);
         
         if (userData.name && userData.name !== 'Студент' && userData.name.trim() !== '') {
           return {
-            name: userData.name,
-            email: userData.email || '',
-            phone: userData.phone || '',
-            program: userData.program || userData.specialization || '',
-            year: userData.year || userData.course || '',
-            group: userData.group || '',
-            id: userData.id || userData.userId || '',
-            bio: userData.bio || ''
+            ...userData,
+            course: userData.course ? parseInt(userData.course) : undefined,
+            specialty_id: userData.specialty_id ? parseInt(userData.specialty_id) : undefined,
+            faculty_id: userData.faculty_id ? parseInt(userData.faculty_id) : undefined
           };
         }
       }
@@ -374,13 +505,13 @@ const getUpdatedStudentInfo = async (): Promise<StudentInfo | null> => {
       console.log('LocalStorage data not available or invalid');
     }
 
-    // Якщо в localStorage немає даних, робимо API запит
-    return await getStudentInfo();
+    return await getCompleteStudentInfo();
   } catch (error) {
     console.error('❌ Error fetching updated student info:', error);
     return null;
   }
 };
+
 
 // API клієнт для обробки запитів
 const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
@@ -414,67 +545,175 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   return await response.json();
 };
 
-// Функція для отримання дедлайну за замовчуванням (через 3 місяці)
-const getDefaultDeadline = (): string => {
+// Функція для отримання дедлайну за замовчуванням за типом роботи
+const getDefaultDeadlineByType = (workType: 'coursework' | 'diploma' | 'practice'): string => {
   const date = new Date();
-  date.setMonth(date.getMonth() + 3);
-  return date.toISOString().split('T')[0];
-};
-
-// Компонент для вибору довільного викладача
-const ChooseRandomTeacher = ({ onSelect }: { onSelect: () => void }) => {
-  const { t } = useTranslation();
   
-  return (
-    <Card className="border border-dashed border-border hover:border-primary/50 transition-colors">
-      <CardContent className="p-6 text-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-            <Users className="w-8 h-8 text-muted-foreground" />
-          </div>
-          <div>
-            <h3 className="font-medium text-foreground mb-2 text-lg">
-              {t('aiAssistant.teachers.notFound.title')}
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {t('aiAssistant.teachers.notFound.description')}
-            </p>
-          </div>
-          <Button onClick={onSelect} className="w-full max-w-xs">
-            <GraduationCap className="w-4 h-4 mr-2" />
-            {t('aiAssistant.teachers.chooseTeacher')}
-          </Button>
-          <p className="text-xs text-muted-foreground mt-2">
-            {t('aiAssistant.teachers.chooseTeacherHint')}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  switch(workType) {
+    case 'practice':
+      date.setMonth(date.getMonth() + 1);
+      break;
+    case 'coursework':
+      date.setMonth(date.getMonth() + 3);
+      break;
+    case 'diploma':
+      date.setMonth(date.getMonth() + 6);
+      break;
+    default:
+      date.setMonth(date.getMonth() + 3);
+  }
+  
+  // Повертаємо у форматі YYYY-MM-DD
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
 };
 
-// Компактний компонент картки викладача з Tooltip
-const CompactTeacherCard = ({ 
+// Функція для форматування дати в українському форматі
+const formatDateUA = (dateString: string): string => {
+  if (!dateString) return 'Не вказано';
+  
+  try {
+    // Перевірка формату
+    let date: Date;
+    
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      // Формат YYYY-MM-DD
+      date = new Date(dateString);
+    } else if (/^\d{2}\.\d{2}\.\d{4}$/.test(dateString)) {
+      // Формат DD.MM.YYYY
+      const [day, month, year] = dateString.split('.');
+      date = new Date(`${year}-${month}-${day}`);
+    } else {
+      // Спробуємо стандартний парсинг
+      date = new Date(dateString);
+    }
+    
+    if (isNaN(date.getTime())) {
+      return 'Не вказано';
+    }
+    
+    return date.toLocaleDateString('uk-UA', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  } catch (error) {
+    console.error('Помилка форматування дати:', error);
+    return 'Не вказано';
+  }
+};
+
+// Функція для визначення типу роботи за темою
+const determineWorkTypeFromTopic = (topic: string): 'coursework' | 'diploma' | 'practice' => {
+  const topicLower = topic.toLowerCase();
+  
+  if (topicLower.includes('практик') || topicLower.includes('звіт') || 
+      topicLower.includes('стажування') || topicLower.includes('впровадження') ||
+      topicLower.includes('відділ') || topicLower.includes('компані')) {
+    return 'practice';
+  } else if (topicLower.includes('диплом') || topicLower.includes('магістер') || 
+             topicLower.includes('кваліфікаційна') || topicLower.includes('випускна') ||
+             topicLower.includes('бакалавр') || topicLower.includes('випускна кваліфікаційна')) {
+    return 'diploma';
+  } else {
+    return 'coursework';
+  }
+};
+
+// Функція для очищення заголовка теми від зайвих частин
+const cleanTopicTitle = (title: string): string => {
+  if (!title) return title;
+  
+  let cleanTitle = title;
+  
+  const patterns = [
+    /^Курсова робота\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Курсова робота:\s*/i,
+    /^Курсова робота\s*[-—]\s*/i,
+    /^Дипломний проект\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Дипломний проект:\s*/i,
+    /^Дипломний проект\s*[-—]\s*/i,
+    /^Дипломна робота\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Дипломна робота:\s*/i,
+    /^Звіт з практики\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Звіт з практики:\s*/i,
+    /^Звіт з практики\s*[-—]\s*/i,
+    /^Бакалаврська робота\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Магістерська робота\s*(Дедлайн:\s*\d{4}-\d{2}-\d{2})?\s*[-—:]\s*/i,
+    /^Тема:\s*/i,
+    /^Тема\s*[-—]\s*/i,
+  ];
+  
+  patterns.forEach(pattern => {
+    cleanTitle = cleanTitle.replace(pattern, '');
+  });
+  
+  cleanTitle = cleanTitle.replace(/\s*Дедлайн:\s*\d{4}-\d{2}-\d{2}$/i, '');
+  cleanTitle = cleanTitle.replace(/\s*\(Дедлайн:\s*\d{4}-\d{2}-\d{2}\)\s*/i, '');
+  cleanTitle = cleanTitle.replace(/\s*\[Дедлайн:\s*\d{4}-\d{2}-\d{2}\]\s*/i, '');
+  
+  cleanTitle = cleanTitle.replace(/^[\s\-—:]+/, '').replace(/[\s\-—:]+$/, '');
+  
+  return cleanTitle.trim() || title;
+};
+
+// Функція для отримання мітки типу роботи
+const getWorkTypeLabel = (workType: 'coursework' | 'diploma' | 'practice'): string => {
+  switch(workType) {
+    case 'coursework':
+      return 'Курсова робота';
+    case 'diploma':
+      return 'Дипломний проєкт';
+    case 'practice':
+      return 'Звіт з практики';
+    default:
+      return 'Курсова робота';
+  }
+};
+
+// Функція для отримання кольору типу роботи
+const getWorkTypeColor = (workType: 'coursework' | 'diploma' | 'practice'): string => {
+  switch(workType) {
+    case 'coursework':
+      return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-200 dark:border-green-700';
+    case 'diploma':
+      return 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900 dark:text-purple-200 dark:border-purple-700';
+    case 'practice':
+      return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-700';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-600';
+  }
+};
+
+// ОНОВЛЕНИЙ КОМПОНЕНТ КАРТКИ ВИКЛАДАЧА
+const EnhancedTeacherCard = ({ 
   match, 
+  topic,
   onSelect,
-  onViewProfile
+  onViewProfile,
+  showAvailability = true,
+  studentInfo,
 }: { 
   match: TeacherMatch;
   topic: SuggestedTopicWithTeachers;
   onSelect: () => void;
   onViewProfile: (teacherId: string) => void;
+  showAvailability?: boolean;
+  studentInfo: CompleteStudentInfo | null;
+  showAllPlaces?: boolean;
 }) => {
   const { t } = useTranslation();
   const teacher = match.teacher;
   const [showDetails, setShowDetails] = useState(false);
   
-  // Функція для отримання ініціалів
   const getInitials = (name: string): string => {
     if (!name) return '??';
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
   };
 
-  // Безпечне отримання email
   const getTeacherEmail = () => {
     if (teacher.email && teacher.email.includes('@') && teacher.email.includes('.')) {
       return teacher.email;
@@ -482,24 +721,43 @@ const CompactTeacherCard = ({
     return 'email@lnu.edu.ua';
   };
 
-  // Безпечне отримання посади
   const getTeacherTitle = () => {
     return teacher.title || t('aiAssistant.teachers.defaultTitle');
   };
 
-  // Безпечне отримання кафедри
   const getTeacherDepartment = () => {
     return teacher.department || t('aiAssistant.teachers.defaultDepartment');
   };
 
-  // Функція для відкриття модального вікна з профілем викладача
+  // Отримуємо інформацію про доступні місця
+  const availableSpots = (() => {
+    if (!match.availablePlaces || !match.availablePlaces.details) return null;
+    
+    const type = topic.workType || 'coursework';
+    const filteredDetails = match.availablePlaces.details.filter(detail => 
+      detail.type === type
+    );
+    
+    const totalSpots = filteredDetails.reduce((sum, detail) => sum + detail.availableSpots, 0);
+    
+    return {
+      count: totalSpots,
+      type: type === 'coursework' ? 'курсових' : 
+            type === 'diploma' ? 'дипломних' : 
+            'звітів з практики',
+      label: getWorkTypeLabel(type),
+      details: filteredDetails
+    };
+  })();
+
+  const hasAnyAvailableSpots = availableSpots && availableSpots.count > 0;
+
   const handleViewFullProfile = () => {
     if (!teacher.id) {
       toast.error(t('aiAssistant.teachers.profileError'));
       return;
     }
     
-    // Очищаємо ID від зайвих символів
     const cleanTeacherId = teacher.id.toString().replace(/[^a-zA-Z0-9-_]/g, '');
     
     if (!cleanTeacherId) {
@@ -512,214 +770,209 @@ const CompactTeacherCard = ({
   };
 
   return (
-    <Card className="border border-border hover:shadow-sm transition-all">
-      <CardContent className="p-3">
-        {/* Основна інформація */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Аватар з Tooltip */}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="relative">
-                    <Avatar 
-                      className="w-10 h-10 border border-border cursor-pointer hover:shadow-md transition-all"
-                      onClick={handleViewFullProfile}
-                    >
-                      <AvatarImage src={teacher.avatarUrl || ''} />
-                      <AvatarFallback className="bg-muted text-muted-foreground text-sm hover:bg-primary/20 transition-colors">
-                        {getInitials(teacher.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    {/* Індикатор онлайн статусу */}
-                    <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-background ${
-                      teacher.isAvailable !== false ? 'bg-green-500' : 'bg-gray-400'
-                    }`} />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent 
-                  side="top" 
-                  align="center" 
-                  className="max-w-xs p-3 bg-popover text-popover-foreground shadow-md border"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Avatar className="w-8 h-8">
-                        <AvatarImage src={teacher.avatarUrl || ''} />
-                        <AvatarFallback className="text-xs">
-                          {getInitials(teacher.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-semibold text-sm">{teacher.name}</p>
-                        <p className="text-xs text-muted-foreground">{getTeacherTitle()}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="text-xs space-y-1">
-                      <div className="flex items-center gap-1">
-                        <Mail className="w-3 h-3" />
-                        <span className="truncate">{getTeacherEmail()}</span>
-                      </div>
-                      {teacher.phone && (
-                        <div className="flex items-center gap-1">
-                          <Phone className="w-3 h-3" />
-                          <span>{teacher.phone}</span>
-                        </div>
-                      )}
-                      {teacher.department && (
-                        <div className="flex items-center gap-1">
-                          <Building className="w-3 h-3" />
-                          <span>{getTeacherDepartment()}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Статистика */}
-                    <div className="flex items-center justify-between pt-1 border-t border-border">
-                      <div className="flex items-center gap-1 text-xs">
-                        <Star className="w-3 h-3 text-yellow-500" />
-                        <span>{(teacher.rating || 4.5).toFixed(1)}/5</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-xs">
-                        <Users className="w-3 h-3 text-blue-500" />
-                        <span>{teacher.studentCount || 0}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-xs">
-                        <CheckCircle className="w-3 h-3 text-green-500" />
-                        <span>{teacher.projectsCompleted || 0}</span>
-                      </div>
-                    </div>
-
-                    {/* Кнопка перегляду профілю */}
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="w-full mt-2 text-xs"
-                      onClick={handleViewFullProfile}
-                    >
-                      <User className="w-3 h-3 mr-1" />
-                      {t('aiAssistant.teachers.viewFullProfile')}
-                    </Button>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+    <Card key={teacher.id} className="hover:shadow-lg transition-all duration-200">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-start gap-4 flex-1">
+            <Avatar className="w-16 h-16 border-2 border-primary/20 cursor-pointer" onClick={handleViewFullProfile}>
+              <AvatarImage src={teacher.avatarUrl || ''} />
+              <AvatarFallback className="bg-primary/10 text-primary text-lg hover:bg-primary/20 transition-colors">
+                {getInitials(teacher.name)}
+              </AvatarFallback>
+            </Avatar>
             
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h3 
-                  className="font-medium text-foreground truncate cursor-pointer hover:text-primary transition-colors"
+                  className="font-bold text-xl text-foreground truncate cursor-pointer hover:text-primary transition-colors"
                   onClick={handleViewFullProfile}
                 >
                   {teacher.name}
                 </h3>
-                <Badge variant="outline" className="text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  teacher.isAvailable ? 'bg-green-500' : 'bg-gray-400'
+                }`} />
+                <Badge variant="secondary" className="ml-2">
                   {match.relevanceScore}%
                 </Badge>
               </div>
               
-              <p className="text-xs text-muted-foreground mb-1 truncate">
-                {getTeacherTitle()}
-              </p>
-              
-              <p className="text-xs text-muted-foreground truncate">
+              <p className="text-primary font-medium mb-1">{getTeacherTitle()}</p>
+              <p className="text-sm text-muted-foreground truncate">
                 {getTeacherDepartment()}
               </p>
-
-              {/* Email - завжди показуємо */}
-              <p className="text-xs text-primary truncate mt-1">
-                {getTeacherEmail()}
-              </p>
-
-              {/* Статус доступності */}
-              <div className="flex items-center gap-1 mt-1">
-                <div className={`w-1.5 h-1.5 rounded-full ${
-                  teacher.isAvailable !== false ? 'bg-green-500' : 'bg-muted-foreground'
-                }`} />
-                <span className="text-xs text-muted-foreground">
-                  {teacher.isAvailable !== false ? t('aiAssistant.teachers.available') : t('aiAssistant.teachers.busy')}
-                </span>
-              </div>
             </div>
           </div>
-          
-          {/* Кнопка дії */}
-          <Button 
-            size="sm" 
-            onClick={onSelect}
-            className="ml-2 flex-shrink-0"
+        </div>
+
+        {/* Навички */}
+        <div className="mb-4">
+          <div className="flex flex-wrap gap-1">
+            {teacher.expertise.slice(0, 3).map((exp, index) => (
+              <Badge key={index} variant="secondary" className="text-xs">
+                {exp}
+              </Badge>
+            ))}
+            {teacher.expertise.length > 3 && (
+              <Badge variant="outline" className="text-xs">
+                +{teacher.expertise.length - 3}
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {/* Статистика */}
+        <div className="grid grid-cols-3 gap-4 mb-4 text-center">
+          <div>
+            <div className="flex items-center justify-center gap-1 text-sm font-semibold text-foreground">
+              <Star className="w-4 h-4 text-yellow-500" />
+              {teacher.rating}/5
+            </div>
+            <p className="text-xs text-muted-foreground">Рейтинг</p>
+          </div>
+          <div>
+            <div className="flex items-center justify-center gap-1 text-sm font-semibold text-foreground">
+              <Users className="w-4 h-4 text-blue-500" />
+              {teacher.studentCount}
+            </div>
+            <p className="text-xs text-muted-foreground">Студентів</p>
+          </div>
+          <div>
+            <div className="flex items-center justify-center gap-1 text-sm font-semibold text-foreground">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              {teacher.projectsCompleted}
+            </div>
+            <p className="text-xs text-muted-foreground">Проектів</p>
+          </div>
+        </div>
+
+        {/* Доступні місця */}
+        {showAvailability && availableSpots && (
+          <div className="mb-4 p-3 rounded-lg border border-border bg-muted/20">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Доступні місця:</span>
+              </div>
+              <Badge variant={hasAnyAvailableSpots ? "default" : "secondary"}>
+                {hasAnyAvailableSpots ? `${availableSpots.count} ${availableSpots.type}` : 'Немає'}
+              </Badge>
+            </div>
+            
+            {studentInfo && hasAnyAvailableSpots && (
+              <div className="text-xs text-muted-foreground">
+                {availableSpots.details.some(d => 
+                  d.specialty_id === studentInfo.specialty_id && 
+                  d.course === studentInfo.course
+                ) ? (
+                  <div className="flex items-center gap-1 text-green-600">
+                    <Check className="w-3 h-3" />
+                    Є місця для вашої спеціальності та курсу
+                  </div>
+                ) : (
+                  <div className="text-amber-600">
+                    Можливо, потрібно обговорити з викладачем
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Контакти */}
+        <div className="space-y-2 mb-4">
+          <div className="flex items-center gap-2 text-sm">
+            <Mail className="w-4 h-4 text-muted-foreground" />
+            <span className="text-muted-foreground truncate">{getTeacherEmail()}</span>
+          </div>
+          {teacher.phone && (
+            <div className="flex items-center gap-2 text-sm">
+              <Phone className="w-4 h-4 text-muted-foreground" />
+              <span className="text-muted-foreground">{teacher.phone}</span>
+            </div>
+          )}
+          {teacher.officeHours && (
+            <div className="flex items-center gap-2 text-sm">
+              <Building className="w-4 h-4 text-muted-foreground" />
+              <span className="text-muted-foreground">{teacher.officeHours}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Кнопки дій */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={handleViewFullProfile}
           >
-            <Send className="w-3 h-3 mr-1" />
-            {t('aiAssistant.teachers.select')}
+            Переглянути профіль
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={onSelect}
+          >
+            Обрати
           </Button>
         </div>
 
-        {/* Детальна інформація (розгорнута) */}
+        {/* Кнопка деталей */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full mt-3 text-xs text-muted-foreground hover:text-primary"
+          onClick={() => setShowDetails(!showDetails)}
+        >
+          {showDetails ? (
+            <>
+              <Minimize2 className="w-3 h-3 mr-1" />
+              Приховати деталі
+            </>
+          ) : (
+            <>
+              <Maximize2 className="w-3 h-3 mr-1" />
+              Показати більше
+            </>
+          )}
+        </Button>
+
+        {/* Детальна інформація */}
         {showDetails && (
-          <div className="mt-3 pt-3 border-t border-border space-y-2">
+          <div className="mt-4 pt-4 border-t border-border space-y-3">
+            {/* Детальні навички */}
+            <div className="space-y-2">
+              <h5 className="font-medium text-sm flex items-center gap-2">
+                <Award className="w-4 h-4" />
+                Експертиза
+              </h5>
+              <div className="flex flex-wrap gap-1">
+                {teacher.expertise.map((exp: string, expIndex: number) => (
+                  <Badge 
+                    key={expIndex} 
+                    variant="secondary"
+                    className="text-xs bg-primary/10 text-primary"
+                  >
+                    {exp}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+
             {/* Навички */}
             {teacher.skills && teacher.skills.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">{t('aiAssistant.teachers.skills')}:</p>
+              <div className="space-y-2">
+                <h5 className="font-medium text-sm flex items-center gap-2">
+                  <Star className="w-4 h-4" />
+                  Навички
+                </h5>
                 <div className="flex flex-wrap gap-1">
-                  {teacher.skills.slice(0, 3).map((skill: string, skillIndex: number) => (
+                  {teacher.skills.map((skill: string, skillIndex: number) => (
                     <Badge 
                       key={skillIndex} 
-                      variant="secondary"
-                      className="text-xs bg-muted text-muted-foreground"
-                    >
-                      {skill}
-                    </Badge>
-                  ))}
-                  {teacher.skills.length > 3 && (
-                    <Badge variant="outline" className="text-xs">
-                      +{teacher.skills.length - 3}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Контакти */}
-            <div className="grid grid-cols-1 gap-2 text-xs">
-              <div className="flex items-center gap-1 truncate">
-                <Mail className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                <span className="truncate text-muted-foreground">{getTeacherEmail()}</span>
-              </div>
-              
-              {teacher.officeHours && (
-                <div className="flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                  <span className="text-muted-foreground">{teacher.officeHours}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Статистика */}
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1">
-                <Star className="w-3 h-3" />
-                <span>{(teacher.rating || 4.5).toFixed(1)}/5</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Users className="w-3 h-3" />
-                <span>{teacher.studentCount || 0}+ студентів</span>
-              </div>
-            </div>
-
-            {/* Експертиза */}
-            {teacher.expertise && teacher.expertise.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">{t('aiAssistant.teachers.expertise')}:</p>
-                <div className="flex flex-wrap gap-1">
-                  {teacher.expertise.slice(0, 4).map((exp: string, expIndex: number) => (
-                    <Badge 
-                      key={expIndex} 
                       variant="outline"
                       className="text-xs"
                     >
-                      {exp}
+                      {skill}
                     </Badge>
                   ))}
                 </div>
@@ -727,26 +980,6 @@ const CompactTeacherCard = ({
             )}
           </div>
         )}
-
-        {/* Кнопка розгорнути/згорнути */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full mt-2 text-xs text-muted-foreground"
-          onClick={() => setShowDetails(!showDetails)}
-        >
-          {showDetails ? (
-            <>
-              <ChevronUp className="w-3 h-3 mr-1" />
-              {t('aiAssistant.teachers.showLess')}
-            </>
-          ) : (
-            <>
-              <ChevronDown className="w-3 h-3 mr-1" />
-              {t('aiAssistant.teachers.showMore')}
-            </>
-          )}
-        </Button>
       </CardContent>
     </Card>
   );
@@ -763,38 +996,42 @@ const AIAssistant = () => {
   const [loadingTeachersForTopic, setLoadingTeachersForTopic] = useState<string | null>(null);
   const [userFacultyId, setUserFacultyId] = useState<number | null>(null);
   const [userFacultyName, setUserFacultyName] = useState<string>('');
+  const [studentInfo, setStudentInfo] = useState<CompleteStudentInfo | null>(null);
 
   const [selectedTopic, setSelectedTopic] = useState<string>('');
   const [generatedStructure, setGeneratedStructure] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
-  // Новий стан для аналізу тексту
   const [analysisText, setAnalysisText] = useState<string>('');
   const [analysisResult, setAnalysisResult] = useState<TextAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
 
-  // Новий стан для форми заявки
   const [showApplicationForm, setShowApplicationForm] = useState<boolean>(false);
   const [applicationFormData, setApplicationFormData] = useState<ApplicationFormData>({
     topic: '',
     description: '',
     goals: '',
     requirements: '',
-    deadline: getDefaultDeadline(),
+    deadline: getDefaultDeadlineByType('coursework'),
     student_name: '',
     student_email: '',
     student_phone: '',
     student_program: '',
     student_year: '',
     student_group: '',
-    student_id: ''
+    student_id: '',
+    workType: 'coursework',
+    student_specialty_id: undefined,
+    student_specialty_code: '',
+    student_faculty_id: undefined
   });
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Стани для модального вікна профілю викладача
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
   const [teacherModalOpen, setTeacherModalOpen] = useState<boolean>(false);
+
+  const [sortBy] = useState<'relevance' | 'availability' | 'rating'>('relevance');
 
   const aiFeatures: AIFeature[] = [
     {
@@ -824,17 +1061,7 @@ const AIAssistant = () => {
     setTeacherModalOpen(true);
   };
 
-  // Функція для отримання назви факультету
-  const getFacultyName = async (facultyId: number): Promise<string> => {
-    try {
-      const data = await apiRequest(`/api/faculties/${facultyId}`);
-      return data.faculty?.name || `${t('aiAssistant.faculty.faculty')} #${facultyId}`;
-    } catch {
-      return `${t('aiAssistant.faculty.faculty')} #${facultyId}`;
-    }
-  };
-
-  // Перевірка автентифікації та отримання faculty_id при завантаженні компонента
+  // Перевірка автентифікації та отримання даних при завантаженні компонента
   useEffect(() => {
     const initializeUserData = async () => {
       const isAuthenticated = await checkAuthentication();
@@ -842,7 +1069,12 @@ const AIAssistant = () => {
         return;
       }
 
-      // Спершу пробуємо отримати faculty_id з токена
+      // Отримуємо повну інформацію про студента
+      const studentData = await getUpdatedStudentInfo();
+      if (studentData) {
+        setStudentInfo(studentData);
+      }
+
       const facultyIdFromToken = getFacultyIdFromToken();
       if (facultyIdFromToken) {
         setUserFacultyId(facultyIdFromToken);
@@ -851,7 +1083,6 @@ const AIAssistant = () => {
         return;
       }
 
-      // Якщо немає в токені, робимо запит за даними користувача
       const userData = await getCurrentUserWithFaculty();
       if (userData && userData.faculty_id) {
         setUserFacultyId(userData.faculty_id);
@@ -863,7 +1094,7 @@ const AIAssistant = () => {
     };
     
     initializeUserData();
-  }, [t]);
+  }, []);
 
   // Синхронізація даних профілю при відкритті форми
   useEffect(() => {
@@ -872,7 +1103,6 @@ const AIAssistant = () => {
         try {
           const studentInfo = await getUpdatedStudentInfo();
           if (studentInfo) {
-            console.log('🔄 Loading updated student profile for form:', studentInfo);
             setApplicationFormData(prev => ({
               ...prev,
               student_name: studentInfo.name,
@@ -881,7 +1111,10 @@ const AIAssistant = () => {
               student_program: studentInfo.program || '',
               student_year: studentInfo.year || '',
               student_group: studentInfo.group || '',
-              student_id: studentInfo.id || ''
+              student_id: studentInfo.id || '',
+              student_specialty_id: studentInfo.specialty_id,
+              student_specialty_code: studentInfo.specialty_code || '',
+              student_faculty_id: studentInfo.faculty_id
             }));
           }
         } catch (error) {
@@ -893,14 +1126,24 @@ const AIAssistant = () => {
     loadStudentProfileForForm();
   }, [showApplicationForm]);
 
+  // Оновлення дедлайну при зміні типу роботи
+  useEffect(() => {
+    if (showApplicationForm && applicationFormData.workType) {
+      const newDeadline = getDefaultDeadlineByType(applicationFormData.workType);
+      setApplicationFormData(prev => ({
+        ...prev,
+        deadline: newDeadline
+      }));
+    }
+  }, [applicationFormData.workType, showApplicationForm]);
+
   // Слухач для оновлення профілю
   useEffect(() => {
     const handleProfileUpdate = () => {
-      console.log('🔄 Profile update event received');
-      if (showApplicationForm) {
-        // Перезавантажуємо дані студента при оновленні профілю
-        getUpdatedStudentInfo().then(studentInfo => {
-          if (studentInfo) {
+      getUpdatedStudentInfo().then(studentInfo => {
+        if (studentInfo) {
+          setStudentInfo(studentInfo);
+          if (showApplicationForm) {
             setApplicationFormData(prev => ({
               ...prev,
               student_name: studentInfo.name,
@@ -908,19 +1151,107 @@ const AIAssistant = () => {
               student_phone: studentInfo.phone || '',
               student_program: studentInfo.program || '',
               student_year: studentInfo.year || '',
-              student_group: studentInfo.group || ''
+              student_group: studentInfo.group || '',
+              student_specialty_id: studentInfo.specialty_id,
+              student_specialty_code: studentInfo.specialty_code || '',
+              student_faculty_id: studentInfo.faculty_id
             }));
-            toast.info('Дані профілю оновлено');
           }
-        });
-      }
+          toast.info('Дані профілю оновлено');
+        }
+      });
     };
 
     window.addEventListener('profileUpdated', handleProfileUpdate);
     return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
   }, [showApplicationForm]);
 
-  // ВИПРАВЛЕНА функція для пошуку відповідних викладачів для конкретної теми
+  // Функція для сортування викладачів
+  const sortTeachers = (teachers: TeacherMatch[], workType?: 'coursework' | 'diploma' | 'practice') => {
+    return [...teachers].sort((a, b) => {
+      const type = workType || 'coursework';
+      
+      // Якщо у обох релевантність 0, сортуємо за іншими критеріями
+      if (a.relevanceScore === 0 && b.relevanceScore === 0) {
+        // Спершу за доступними місцями
+        const getAvailableSpots = (teacher: TeacherMatch) => {
+          if (!teacher.availablePlaces || !teacher.availablePlaces.details) return 0;
+          return teacher.availablePlaces.details
+            .filter(detail => detail.type === type)
+            .reduce((sum, detail) => sum + detail.availableSpots, 0);
+        };
+        
+        const aSpots = getAvailableSpots(a);
+        const bSpots = getAvailableSpots(b);
+        
+        if (bSpots !== aSpots) return bSpots - aSpots;
+        
+        // Потім за рейтингом
+        return (b.teacher.rating || 0) - (a.teacher.rating || 0);
+      }
+      
+      switch(sortBy) {
+        case 'availability': {
+          // Спершу за кількістю доступних місць
+          const getAvailableSpots = (teacher: TeacherMatch) => {
+            if (!teacher.availablePlaces || !teacher.availablePlaces.details) return 0;
+            
+            const filteredDetails = teacher.availablePlaces.details.filter(detail => 
+              detail.type === type && detail.availableSpots > 0
+            );
+            
+            // Якщо є студент, рахуємо точні співпадіння
+            if (studentInfo && studentInfo.specialty_id && studentInfo.course) {
+              const exactMatches = filteredDetails.filter(detail => 
+                detail.specialty_id === studentInfo.specialty_id && detail.course === studentInfo.course
+              );
+              if (exactMatches.length > 0) {
+                return exactMatches.reduce((sum, detail) => sum + detail.availableSpots, 0) * 100;
+              }
+            }
+            
+            return filteredDetails.reduce((sum, detail) => sum + detail.availableSpots, 0);
+          };
+          
+          const aSpots = getAvailableSpots(a);
+          const bSpots = getAvailableSpots(b);
+          
+          if (bSpots !== aSpots) return bSpots - aSpots;
+          
+          // Потім за релевантністю
+          return b.relevanceScore - a.relevanceScore;
+        }
+          
+        case 'rating': {
+          // За рейтингом
+          const aRating = a.teacher.rating || 0;
+          const bRating = b.teacher.rating || 0;
+          
+          if (bRating !== aRating) return bRating - aRating;
+          
+          // Потім за доступними місцями
+          return b.relevanceScore - a.relevanceScore;
+        }
+          
+        default: { // 'relevance'
+          // За релевантністю (навіть якщо 0)
+          if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
+          
+          // Потім за доступними місцями
+          const getTotalSpots = (teacher: TeacherMatch) => {
+            if (!teacher.availablePlaces || !teacher.availablePlaces.details) return 0;
+            return teacher.availablePlaces.details
+              .filter(detail => detail.type === type)
+              .reduce((sum, detail) => sum + detail.availableSpots, 0);
+          };
+          
+          return getTotalSpots(b) - getTotalSpots(a);
+        }
+      }
+    });
+  };
+
+  // Функція для пошуку відповідних викладачів для конкретної теми
   const handleFindTeachersForTopic = async (topic: string, topicIndex: number): Promise<void> => {
     setLoadingTeachersForTopic(topic);
     
@@ -936,7 +1267,32 @@ const AIAssistant = () => {
         throw new Error('Токен автентифікації не знайдено');
       }
 
-      const facultyId = userFacultyId;
+      // Отримуємо оновлену інформацію про студента
+      const studentInfo = await getUpdatedStudentInfo();
+      
+      // Отримуємо оригінальну тему (без очищення) для пошуку
+      const originalTopic = suggestedTopics[topicIndex]?.originalTitle || topic;
+
+      const requestBody = {
+        topic: originalTopic,
+        facultyId: studentInfo?.faculty_id || userFacultyId,
+        workType: suggestedTopics[topicIndex]?.workType || 'coursework',
+        includeAvailablePlaces: true,
+        studentInfo: {
+          specialty_id: studentInfo?.specialty_id,
+          specialty_code: studentInfo?.specialty_code,
+          course: studentInfo?.course,
+          faculty_id: studentInfo?.faculty_id,
+          faculty_name: studentInfo?.faculty_name
+        },
+        filters: {
+          exactMatchOnly: false,
+          includeAllPlaces: true
+        },
+        includePlaceDetails: true
+      };
+
+      console.log('🔍 Searching teachers for topic with request:', requestBody);
 
       const response = await fetch('/api/teachers/match', {
         method: 'POST',
@@ -944,24 +1300,62 @@ const AIAssistant = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          topic: topic,
-          facultyId: facultyId
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error:', errorText);
         throw new Error(`Помилка сервера: ${response.status}`);
       }
 
       const data = await response.json();
 
-      // ОНОВЛЮЄМО СТАН З РЕЗУЛЬТАТАМИ ПОШУКУ
+      console.log('✅ Found teachers with data:', {
+        count: data.teachers?.length || 0,
+        hasAvailablePlaces: data.teachers?.some((t: TeacherMatch) => t.availablePlaces),
+        teachers: data.teachers?.map((t: TeacherMatch) => ({
+          name: t.teacher.name,
+          hasPlaces: !!t.availablePlaces,
+          placeCount: t.availablePlaces?.totalAvailable || 0,
+          placeDetails: t.availablePlaces?.details?.length || 0
+        }))
+      });
+
+      // Обробляємо деталі доступних місць
+      const processedTeachers = (data.teachers || []).map((teacher: TeacherMatch) => {
+        // Якщо є деталі доступних місць, обробляємо їх
+        if (teacher.availablePlaces && teacher.availablePlaces.details) {
+          // Позначаємо точні співпадіння для студента
+          const processedDetails = teacher.availablePlaces.details.map(detail => ({
+            ...detail,
+            isExactMatch: studentInfo?.specialty_id && studentInfo?.course 
+              ? detail.specialty_id === studentInfo.specialty_id && detail.course === studentInfo.course
+              : false
+          }));
+          
+          // Перераховуємо загальну кількість доступних місць
+          const totalAvailable = processedDetails.reduce((sum, detail) => sum + detail.availableSpots, 0);
+          
+          return {
+            ...teacher,
+            availablePlaces: {
+              ...teacher.availablePlaces,
+              details: processedDetails,
+              totalAvailable
+            }
+          };
+        }
+        
+        return teacher;
+      });
+
+      // Оновлюємо стан з результатами пошуку
       setSuggestedTopics(prev => prev.map((t, index) => 
         index === topicIndex 
           ? { 
               ...t, 
-              teacherMatches: data.teachers || [],
+              teacherMatches: processedTeachers || [],
               showTeachers: true,
               error: undefined
             }
@@ -971,7 +1365,8 @@ const AIAssistant = () => {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : t('aiAssistant.teachers.unknownError');
       
-      // ОНОВЛЮЄМО СТАН З ПОМИЛКОЮ
+      console.error('❌ Error finding teachers:', err);
+      
       setSuggestedTopics(prev => prev.map((t, index) => 
         index === topicIndex 
           ? { 
@@ -987,17 +1382,15 @@ const AIAssistant = () => {
     }
   };
 
-  // Покращена функція для перемикання відображення викладачів для теми
+  // Функція для перемикання відображення викладачів для теми
   const toggleTeachersForTopic = (topicIndex: number, topicTitle: string): void => {
     const topic = suggestedTopics[topicIndex];
     
-    // Якщо вже завантажуємо викладачів для цієї теми, не робимо нічого
     if (loadingTeachersForTopic === topicTitle) return;
     
     if (!topic.teacherMatches && !topic.showTeachers && !topic.error) {
       handleFindTeachersForTopic(topicTitle, topicIndex);
     } else {
-      // Просто перемикаємо відображення
       setSuggestedTopics(prev => prev.map((t, index) => 
         index === topicIndex 
           ? { ...t, showTeachers: !t.showTeachers }
@@ -1141,35 +1534,76 @@ const AIAssistant = () => {
     setIsLoadingPremium(true);
 
     try {
+      // Отримуємо інформація про студента для персоналізованих рекомендацій
+      const studentInfo = await getUpdatedStudentInfo();
+      
       const topicsData = await apiRequest('/api/generate-topics', {
         method: 'POST',
-        body: JSON.stringify({ idea: ideaInput })
+        body: JSON.stringify({ 
+          idea: ideaInput,
+          studentInfo: {
+            specialty_id: studentInfo?.specialty_id,
+            specialty_code: studentInfo?.specialty_code,
+            course: studentInfo?.course,
+            faculty_id: studentInfo?.faculty_id
+          }
+        })
       });
 
       if (Array.isArray(topicsData.topics)) {
-        const formatted: SuggestedTopicWithTeachers[] = topicsData.topics.map((item: any) => ({
-          title: item.title || t('aiAssistant.suggestions.defaultTitle'),
-          relevance: Math.floor(Math.random() * 21) + 80,
-          category: item.category || 'AI',
-          description: item.description || t('aiAssistant.suggestions.defaultDescription'),
-          teacherMatches: undefined,
-          showTeachers: false,
-          error: undefined
-        }));
+        const formatted: SuggestedTopicWithTeachers[] = topicsData.topics.map((item: any, index: number) => {
+          // Спочатку очищаємо заголовок
+          const rawTitle = item.title || t('aiAssistant.suggestions.defaultTitle');
+          const cleanedTitle = cleanTopicTitle(rawTitle);
+          
+          console.log(`Topic ${index}: Raw: "${rawTitle}" → Cleaned: "${cleanedTitle}"`);
+
+          const workType = determineWorkTypeFromTopic(cleanedTitle);
+
+          return {
+            title: cleanedTitle,
+            relevance: Math.floor(Math.random() * 21) + 80,
+            category: item.category || 'AI',
+            description: item.description || t('aiAssistant.suggestions.defaultDescription'),
+            teacherMatches: undefined,
+            showTeachers: false,
+            error: undefined,
+            workType: workType,
+            originalTitle: rawTitle,
+          };
+        });
+        
         setSuggestedTopics(formatted);
       }
 
       try {
         const premiumData = await apiRequest(`/api/teacher/premium-suggestions?idea=${encodeURIComponent(ideaInput)}`);
         if (premiumData.suggestions) {
-          setPremiumSuggestions(premiumData.suggestions);
+          const formattedPremium: PremiumSuggestion[] = premiumData.suggestions.map((suggestion: any) => {
+            // Очищаємо заголовок для преміум-рекомендацій
+            const rawTitle = suggestion.title || '';
+            const cleanedTitle = cleanTopicTitle(rawTitle);
+            
+            return {
+              ...suggestion,
+              title: cleanedTitle || suggestion.title || '',
+              workType: suggestion.work_type ? 
+                (suggestion.work_type === 'diploma' ? 'diploma' : 
+                 suggestion.work_type === 'practice' ? 'practice' : 'coursework') : 
+                determineWorkTypeFromTopic(suggestion.title || ''),
+              teacherId: suggestion.teacher_id,
+              teacherName: suggestion.teacher_name
+            };
+          });
+          
+          setPremiumSuggestions(formattedPremium);
         }
-      } catch {
-        // Premium suggestions not available
+      } catch (error) {
+        console.log('Premium suggestions not available:', error);
       }
 
-    } catch {
-      // Handle error silently
+    } catch (error) {
+      console.error('❌ Error generating suggestions:', error);
     } finally {
       setIsLoadingSuggestions(false);
       setIsLoadingPremium(false);
@@ -1187,20 +1621,22 @@ const AIAssistant = () => {
     }
   };
 
-  // ВИПРАВЛЕНА функція для обробки вибору теми
-  const handleTopicSelect = async (topic: string, teacherId?: string) => {
-    setSelectedTopic(topic);
+  // Функція для обробки вибору теми
+  const handleTopicSelect = async (topic: string, teacherId?: string, workType?: 'coursework' | 'diploma' | 'practice') => {
+    const cleanedTopic = cleanTopicTitle(topic);
     
-    // Отримуємо актуальну інформацію про студента
+    setSelectedTopic(cleanedTopic);
+    
+    const determinedWorkType = workType || determineWorkTypeFromTopic(topic);
+    
     const studentInfo = await getUpdatedStudentInfo();
-    console.log('🎯 Selected topic with updated student info:', studentInfo);
     
-    // Заповнюємо форму даними - ВКЛЮЧАЮЧИ номер телефону, курс та групу
     setApplicationFormData(prev => ({
       ...prev,
-      topic: topic,
+      topic: cleanedTopic,
       teacherId: teacherId,
-      // ВИПРАВЛЕННЯ: Використовуємо всі дані з профілю включаючи телефон та групу
+      workType: determinedWorkType,
+      deadline: getDefaultDeadlineByType(determinedWorkType),
       student_name: studentInfo?.name || prev.student_name,
       student_email: studentInfo?.email || prev.student_email,
       student_phone: studentInfo?.phone || prev.student_phone,
@@ -1208,76 +1644,201 @@ const AIAssistant = () => {
       student_year: studentInfo?.year || prev.student_year,
       student_group: studentInfo?.group || prev.student_group,
       student_id: studentInfo?.id || prev.student_id,
-      // Опис проекту залишаємо порожнім для заповнення студентом
+      student_specialty_id: studentInfo?.specialty_id,
+      student_specialty_code: studentInfo?.specialty_code || '',
+      student_faculty_id: studentInfo?.faculty_id,
       description: '',
       goals: '',
       requirements: ''
     }));
     
     if (!ideaInput.trim()) {
-      setIdeaInput(topic);
+      setIdeaInput(cleanedTopic);
     }
     
     setShowApplicationForm(true);
   };
 
-  // Оновіть функцію handleCloseApplicationForm для збереження даних профілю
   const handleCloseApplicationForm = () => {
     setShowApplicationForm(false);
-    // Не скидаємо дані профілю, лише тему та опис роботи
     setApplicationFormData(prev => ({
       ...prev,
       topic: '',
       description: '',
       goals: '',
       requirements: '',
-      deadline: getDefaultDeadline(),
+      deadline: getDefaultDeadlineByType(prev.workType),
+      workType: 'coursework',
       teacherId: undefined
     }));
   };
 
-  // ВИПРАВЛЕНА функція для відправки заявки
+  // ПОКРАЩЕНА ФУНКЦІЯ ДЛЯ ДЕБАГУ
+  const debugApplicationData = (): {
+    hasAllRequiredFields: boolean;
+    missingFields: string[];
+    isValid: boolean;
+    issues: string[];
+  } => {
+    const requiredFields = [
+      { field: 'topic', value: applicationFormData.topic.trim() },
+      { field: 'description', value: applicationFormData.description.trim() },
+      { field: 'goals', value: applicationFormData.goals.trim() },
+      { field: 'requirements', value: applicationFormData.requirements.trim() },
+      { field: 'student_name', value: applicationFormData.student_name.trim() },
+      { field: 'student_email', value: applicationFormData.student_email.trim() },
+      { field: 'workType', value: applicationFormData.workType }
+    ];
+
+    const missingFields = requiredFields
+      .filter(f => !f.value)
+      .map(f => f.field);
+
+    const issues: string[] = [];
+    
+    if (!applicationFormData.teacherId) {
+      issues.push('Не вибрано викладача');
+    }
+    
+    if (!studentInfo?.specialty_id) {
+      issues.push('Не вказано спеціальність студента');
+    }
+    
+    if (!studentInfo?.course) {
+      issues.push('Не вказано курс студента');
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      issues.push('Токен автентифікації відсутній');
+    }
+
+    console.log('🔍 ДЕТАЛЬНИЙ АНАЛІЗ ДАНИХ ЗАЯВКИ:');
+    console.log('--- СТАТУС ПОЛІВ ---');
+    requiredFields.forEach(f => {
+      console.log(`${f.field}: "${f.value}" (${f.value ? '✅ OK' : '❌ ПУСТЕ'})`);
+    });
+    
+    console.log('--- ДАНІ СТУДЕНТА ---');
+    console.log('Ім\'я:', studentInfo?.name);
+    console.log('ID студента:', studentInfo?.id);
+    console.log('Спеціальність ID:', studentInfo?.specialty_id);
+    console.log('Курс:', studentInfo?.course);
+    console.log('Email:', studentInfo?.email);
+    
+    console.log('--- ID ВИКЛАДАЧА ---');
+    console.log('Teacher ID:', applicationFormData.teacherId, 
+      applicationFormData.teacherId ? '✅ Вказано' : '❌ НЕ ВКАЗАНО');
+    
+    console.log('--- ТОКЕН АВТЕНТИФІКАЦІЇ ---');
+    console.log('Токен присутній?', token ? '✅ Так' : '❌ Ні');
+    if (token) {
+      console.log('Довжина токена:', token.length);
+    }
+    
+    console.log('--- ПРОБЛЕМИ ---');
+    if (issues.length > 0) {
+      issues.forEach(issue => console.log(`❌ ${issue}`));
+    } else {
+      console.log('✅ Всі перевірки пройдено');
+    }
+    
+    console.log('--- ПОВНІ ДАНІ ДЛЯ ВІДПРАВКИ ---');
+    console.log('Дані для відправки:', {
+      topic: applicationFormData.topic.trim(),
+      description: applicationFormData.description.trim(),
+      goals: applicationFormData.goals.trim(),
+      requirements: applicationFormData.requirements.trim(),
+      teacherId: applicationFormData.teacherId,
+      deadline: applicationFormData.deadline,
+      student_name: applicationFormData.student_name.trim(),
+      student_email: applicationFormData.student_email.trim(),
+      student_phone: applicationFormData.student_phone?.trim() || '',
+      student_program: applicationFormData.student_program?.trim() || '',
+      student_year: studentInfo?.course?.toString() || applicationFormData.student_year,
+      student_group: applicationFormData.student_group?.trim() || '',
+      student_id: studentInfo?.id || '',
+      workType: applicationFormData.workType,
+      type: applicationFormData.workType === 'coursework' ? 'course' : 
+            applicationFormData.workType === 'diploma' ? 'diploma' : 'practice',
+      student_specialty_id: studentInfo?.specialty_id,
+      student_specialty_code: studentInfo?.specialty_code || '',
+      student_faculty_id: studentInfo?.faculty_id
+    });
+
+    return {
+      hasAllRequiredFields: missingFields.length === 0,
+      missingFields,
+      isValid: missingFields.length === 0 && issues.length === 0,
+      issues
+    };
+  };
+
+  // ПОКРАЩЕНА ФУНКЦІЯ ВІДПРАВКИ ЗАЯВКИ
   const handleSubmitApplication = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Перевірка обов'язкових полів
-    if (!applicationFormData.topic.trim() || 
-        !applicationFormData.description.trim() || 
-        !applicationFormData.goals.trim() || 
-        !applicationFormData.requirements.trim() ||
-        !applicationFormData.student_name.trim() ||
-        !applicationFormData.student_email.trim()) {
-      toast.error(t('aiAssistant.application.validationError'));
+    console.log('🟡 Початок відправки заявки...');
+    
+    // Перевірка даних перед відправкою
+    const debugInfo = debugApplicationData();
+    
+    if (!debugInfo.hasAllRequiredFields) {
+      toast.error(`Будь ласка, заповніть обов'язкові поля: ${debugInfo.missingFields.join(', ')}`);
       return;
     }
     
+    // Перевірка наявності teacherId
+    if (!applicationFormData.teacherId) {
+      toast.error('Будь ласка, виберіть викладача');
+      return;
+    }
+
+    // Перевірка спеціальності та курсу
+    if (!studentInfo?.specialty_id || !studentInfo?.course) {
+      toast.error('Будь ласка, заповніть інформацію про спеціальність та курс у вашому профілі');
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      toast.error('Помилка автентифікації. Будь ласка, увійдіть знову.');
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
-      const token = getAuthToken();
-      
-      if (!token) {
-        toast.error(t('aiAssistant.application.authError'));
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Готуємо дані для відправки
+      // Підготуємо дані для відправки
       const applicationData = {
-        topic: applicationFormData.topic,
-        description: applicationFormData.description,
-        goals: applicationFormData.goals,
-        requirements: applicationFormData.requirements,
-        teacherId: applicationFormData.teacherId || null,
-        deadline: applicationFormData.deadline,
-        student_name: applicationFormData.student_name,
-        student_email: applicationFormData.student_email,
-        student_phone: applicationFormData.student_phone || '',
-        student_program: applicationFormData.student_program || '',
-        student_year: applicationFormData.student_year || '',
-        student_group: applicationFormData.student_group || ''
-      };
+  topic: applicationFormData.topic.trim(),
+  description: applicationFormData.description.trim(),
+  goals: applicationFormData.goals.trim(),
+  requirements: applicationFormData.requirements.trim(),
+  teacherId: applicationFormData.teacherId,
+  deadline: applicationFormData.deadline,
+  student_name: applicationFormData.student_name.trim(),
+  student_email: applicationFormData.student_email.trim(),
+  student_phone: applicationFormData.student_phone?.trim() || '',
+  student_program: applicationFormData.student_program?.trim() || '',
+  student_year: String(studentInfo?.course || ''),
+  student_group: applicationFormData.student_group?.trim() || '',
+  student_id: studentInfo?.id || '',
+  student_id_number: String(studentInfo?.id || ''),
+  workType: applicationFormData.workType,
+  type: applicationFormData.workType === 'coursework' ? 'course' : 
+        applicationFormData.workType === 'diploma' ? 'diploma' : 'practice',
+  student_specialty_id: studentInfo?.specialty_id,
+  student_specialty_code: studentInfo?.specialty_code || '',
+  student_faculty_id: studentInfo?.faculty_id
+};
 
+      console.log('📤 Відправляємо заявку викладачу:', {
+        endpoint: '/api/student/applications',
+        data: applicationData
+      });
+
+      // Використовуємо правильний ендпоінт
       const response = await fetch('/api/student/applications', {
         method: 'POST',
         headers: {
@@ -1288,36 +1849,133 @@ const AIAssistant = () => {
       });
 
       const responseText = await response.text();
+      console.log('📥 Відповідь сервера:', {
+        status: response.status,
+        statusText: response.statusText,
+        text: responseText
+      });
+
       let responseData;
       try {
         responseData = responseText ? JSON.parse(responseText) : {};
-      } catch {
+      } catch (e) {
+        console.error('Помилка парсингу відповіді:', e);
         responseData = { message: responseText };
       }
 
       if (!response.ok) {
+        console.error('❌ Помилка відправки заявки:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData
+        });
+
+        // Обробка специфічних помилок
         if (response.status === 400) {
-          toast.error(responseData.message || t('aiAssistant.application.validationError'));
+          const errorMessage = responseData.message || 'Помилка валідації';
+          
+          if (responseData.missingFields) {
+            toast.error(`Будь ласка, заповніть: ${responseData.missingFields.join(', ')}`);
+          } else if (errorMessage.includes('максимальну кількість заявок')) {
+            toast.error('Ви вже маєте максимальну кількість заявок (3). Видаліть або очікуйте відповідь на існуючі заявки.');
+          } else if (errorMessage.includes('вже є активна заявка')) {
+            toast.error('У вас вже є активна заявка до цього викладача. Ви можете подати заявку лише до одного викладача одночасно.');
+          } else if (errorMessage.includes('немає доступних місць')) {
+            toast.error('На жаль, у викладача немає доступних місць для вашої спеціальності та курсу.');
+          } else {
+            toast.error(errorMessage);
+          }
         } else if (response.status === 401) {
-          toast.error(t('aiAssistant.application.authError'));
+          toast.error('Помилка автентифікації. Будь ласка, увійдіть знову.');
+        } else if (response.status === 403) {
+          toast.error('Доступ заборонено. Користувач не є студентом.');
         } else if (response.status === 404) {
-          toast.error(t('aiAssistant.application.teacherNotFound'));
+          toast.error('Викладача не знайдено.');
+        } else if (response.status === 500) {
+          toast.error(`Помилка сервера: ${responseData.details || responseData.message || 'Невідома помилка'}`);
         } else {
-          toast.error(`Помилка сервера: ${response.status} - ${responseData.message || 'Невідома помилка'}`);
+          toast.error(`Помилка: ${response.status} - ${responseData.message || 'Невідома помилка'}`);
         }
         return;
       }
 
-      // Показуємо повідомлення про успіх
-      let successMessage = t('aiAssistant.application.submitSuccess');
-      if (applicationFormData.teacherId) {
-        successMessage += ` ${t('aiAssistant.application.teacherNotified')}`;
-      }
+      // Успішна відповідь
+      console.log('✅ Заявка успішно створена:', responseData);
+      
+      const successMessage = `Заявка успішно подана!${
+        responseData.remainingApplications ? 
+        ` Залишилось заявок: ${responseData.remainingApplications}` : 
+        ''
+      }`;
+      
+      const description = `Тип роботи: ${getWorkTypeLabel(applicationFormData.workType)}\nДедлайн: ${applicationFormData.deadline}\n\n✅ Кількість доступних місць у викладача оновлено`;
       
       toast.success(successMessage, {
-        duration: 5000,
+        duration: 7000,
+        description: description
       });
-      
+
+      // ВІДПРАВЛЯЄМО ПОДІЮ ДЛЯ ОНОВЛЕННЯ TeacherApplications
+      window.dispatchEvent(new CustomEvent('applicationCreated', {
+        detail: { 
+          teacherId: applicationFormData.teacherId,
+          applicationData: responseData
+        }
+      }));
+
+      // Оновлення UI - оновлюємо кількість доступних місць у картках викладачів
+      setSuggestedTopics(prev => prev.map(topic => {
+        if (topic.teacherMatches && applicationFormData.teacherId) {
+          return {
+            ...topic,
+            teacherMatches: topic.teacherMatches.map(teacherMatch => {
+              if (teacherMatch.teacher.id === applicationFormData.teacherId) {
+                // Оновлюємо кількість доступних місць для цього викладача
+                const updatedPlaces = teacherMatch.availablePlaces?.details?.map(place => {
+                  if (place.type === applicationFormData.workType && 
+                      place.specialty_id === studentInfo?.specialty_id &&
+                      place.course === studentInfo?.course) {
+                    return {
+                      ...place,
+                      availableSpots: Math.max(0, place.availableSpots - 1),
+                      current_students: (place.current_students || 0) + 1,
+                      isExactMatch: true
+                    };
+                  }
+                  return place;
+                }) || [];
+                
+                // Перераховуємо загальну статистику
+                const totalAvailable = updatedPlaces.reduce((sum, p) => sum + p.availableSpots, 0);
+                const courseworkSpots = updatedPlaces
+                  .filter(p => p.type === 'coursework')
+                  .reduce((sum, p) => sum + p.availableSpots, 0);
+                const diplomaSpots = updatedPlaces
+                  .filter(p => p.type === 'diploma')
+                  .reduce((sum, p) => sum + p.availableSpots, 0);
+                const practiceSpots = updatedPlaces
+                  .filter(p => p.type === 'practice')
+                  .reduce((sum, p) => sum + p.availableSpots, 0);
+                
+                return {
+                  ...teacherMatch,
+                  availablePlaces: {
+                    ...teacherMatch.availablePlaces,
+                    details: updatedPlaces,
+                    totalAvailable,
+                    coursework: courseworkSpots,
+                    diploma: diplomaSpots,
+                    practice: practiceSpots
+                  }
+                };
+              }
+              return teacherMatch;
+            })
+          };
+        }
+        return topic;
+      }));
+
       // Закриваємо форму та скидаємо дані
       setShowApplicationForm(false);
       setApplicationFormData({
@@ -1325,24 +1983,78 @@ const AIAssistant = () => {
         description: '',
         goals: '',
         requirements: '',
-        deadline: getDefaultDeadline(),
+        deadline: getDefaultDeadlineByType('coursework'),
         student_name: '',
         student_email: '',
         student_phone: '',
         student_program: '',
         student_year: '',
         student_group: '',
-        student_id: ''
+        student_id: '',
+        workType: 'coursework',
+        student_specialty_id: undefined,
+        student_specialty_code: '',
+        student_faculty_id: undefined
       });
       
-      // Очищаємо вибрану тему
       setSelectedTopic('');
       
-    } catch {
-      toast.error(t('aiAssistant.application.submitError'));
+      // Оновлюємо інформацію про студента (може змінитися кількість заявок)
+      setTimeout(async () => {
+        const updatedStudentInfo = await getUpdatedStudentInfo();
+        if (updatedStudentInfo) {
+          setStudentInfo(updatedStudentInfo);
+        }
+      }, 1000);
+
+    } catch (error) {
+      console.error('❌ Помилка підключення до сервера:', error);
+      
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        toast.error('Проблема з підключенням до сервера. Перевірте інтернет-з\'єднання.');
+      } else if (error instanceof SyntaxError) {
+        toast.error('Помилка обробки відповіді сервера.');
+      } else {
+        toast.error('Невідома помилка підключення. Спробуйте ще раз.');
+      }
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Функція для тестової відправки (для дебагу)
+  const handleTestSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    console.log('🧪 ТЕСТОВА ВІДПРАВКА ЗАЯВКИ');
+    debugApplicationData();
+    
+    // Симулюємо успішну відповідь
+    toast.success('Тест: Заявка успішно відправлена! (ТЕСТОВИЙ РЕЖИМ)', {
+      duration: 5000,
+      description: 'Це тестова відповідь. Реальна заявка не була відправлена.'
+    });
+    
+    // Оновлюємо UI без реального запиту
+    setShowApplicationForm(false);
+    setApplicationFormData({
+      topic: '',
+      description: '',
+      goals: '',
+      requirements: '',
+      deadline: getDefaultDeadlineByType('coursework'),
+      student_name: '',
+      student_email: '',
+      student_phone: '',
+      student_program: '',
+      student_year: '',
+      student_group: '',
+      student_id: '',
+      workType: 'coursework',
+      student_specialty_id: undefined,
+      student_specialty_code: '',
+      student_faculty_id: undefined
+    });
   };
 
   // Функція для оновлення даних форми
@@ -1354,22 +2066,22 @@ const AIAssistant = () => {
   };
 
   // Функція для обробки вибору довільного викладача
-  const handleChooseRandomTeacher = (topicTitle: string) => {
+  const handleChooseRandomTeacher = (topicTitle: string, workType: 'coursework' | 'diploma' | 'practice' = 'coursework') => {
     const chooseTeacherUrl = '/choose-teacher';
     
-    // Тимчасово показуємо alert, поки сторінка не готова
-    if (chooseTeacherUrl === '/choose-teacher') {
-      toast.info(t('aiAssistant.teachers.chooseTeacherAlert', { 
-        topic: topicTitle,
-        faculty: userFacultyName || t('aiAssistant.faculty.notSet')
-      }));
-      
-      // Альтернатива: заповнити форму з темою, але без викладача
-      handleTopicSelect(topicTitle);
-    } else {
-      const urlWithParams = `${chooseTeacherUrl}?topic=${encodeURIComponent(topicTitle)}&faculty=${userFacultyId || ''}`;
-      window.location.href = urlWithParams;
-    }
+    const urlParams = new URLSearchParams({
+      topic: topicTitle,
+      faculty: userFacultyId?.toString() || '',
+      facultyName: userFacultyName || '',
+      workType: workType,
+      specialty: studentInfo?.specialty_code || '',
+      course: studentInfo?.course?.toString() || '',
+      exactMatchOnly: 'false'
+    });
+    
+    const fullUrl = `${chooseTeacherUrl}?${urlParams.toString()}`;
+    
+    window.location.href = fullUrl;
   };
 
   const getSuggestionIcon = (type: string) => {
@@ -1417,82 +2129,235 @@ const AIAssistant = () => {
     }
   };
 
-  // ВИПРАВЛЕНА функція для відображення рекомендованих викладачів для теми
+  // ОНОВЛЕНА ФУНКЦІЯ ДЛЯ ВІДОБРАЖЕННЯ ВИКЛАДАЧІВ (БЕЗ ФІЛЬТРІВ)
   const renderTeacherMatchesForTopic = (topic: SuggestedTopicWithTeachers, topicIndex: number) => {
     if (!topic.showTeachers) return null;
 
+    // Сортуємо викладачів
+    const allTeachers = topic.teacherMatches || [];
+    const sortedTeachers = sortTeachers(allTeachers, topic.workType);
+    const hasAvailableTeachers = sortedTeachers.length > 0;
+
+    // Підраховуємо статистику
+    const exactMatchesCount = sortedTeachers.filter(teacher => 
+      teacher.availablePlaces?.details?.some(detail => detail.isExactMatch)
+    ).length;
+
+    // Рахуємо загальну кількість доступних місць
+    const totalAvailableSpots = sortedTeachers.reduce((total, teacher) => {
+      if (!teacher.availablePlaces || !teacher.availablePlaces.details) return total;
+      const matchingDetails = teacher.availablePlaces.details.filter(detail => 
+        detail.type === (topic.workType || 'coursework')
+      );
+      return total + matchingDetails.reduce((sum, detail) => sum + detail.availableSpots, 0);
+    }, 0);
+
+    // Рахуємо середню релевантність
+    const avgRelevance = sortedTeachers.length > 0 
+      ? Math.round(sortedTeachers.reduce((sum, t) => sum + t.relevanceScore, 0) / sortedTeachers.length)
+      : 0;
+
     return (
-      <div className="mt-4 border-t border-border pt-4">
-        <h4 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-          <GraduationCap className="w-4 h-4 text-muted-foreground" />
-          {t('aiAssistant.teachers.recommended')}
-          {topic.teacherMatches && topic.teacherMatches.length > 0 && (
-            <Badge variant="outline" className="ml-2">
-              {topic.teacherMatches.length}
+      <div className="mt-6 border-t border-border pt-6">
+        <div className="space-y-6">
+          {/* Заголовок з статистикою */}
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-xl font-bold text-foreground flex items-center gap-2">
+                <GraduationCap className="text-primary w-6 h-6" />
+                Рекомендовані викладачі
+              </h4>
+              <p className="text-muted-foreground">
+                {topic.title}
+              </p>
+            </div>
+            
+            <Badge variant="outline" className="text-sm">
+              {sortedTeachers.length} викладачів
             </Badge>
+          </div>
+
+          {/* Інформація про результат пошуку */}
+          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <div className="flex items-center gap-3">
+              <Info className="w-5 h-5 text-blue-600" />
+              <div className="text-sm">
+                <p className="font-medium text-blue-700 dark:text-blue-300">
+                  {sortedTeachers.length === 0 
+                    ? 'Викладачів не знайдено за вашими критеріями' 
+                    : `Знайдено ${sortedTeachers.length} викладачів`}
+                </p>
+                <p className="text-blue-600 dark:text-blue-400 mt-1">
+                  {sortedTeachers.length > 0 && avgRelevance === 0 
+                    ? 'Пошук за ключовими словами не дав результатів. Показано всіх викладачів факультету.'
+                    : `Середня релевантність: ${avgRelevance}%`}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Статистика */}
+          {sortedTeachers.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-primary">{sortedTeachers.length}</div>
+                  <p className="text-sm text-muted-foreground">Викладачів</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-green-600">{exactMatchesCount}</div>
+                  <p className="text-sm text-muted-foreground">Точних співпадінь</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-blue-600">
+                    {avgRelevance}%
+                  </div>
+                  <p className="text-sm text-muted-foreground">Середня релевантність</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-purple-600">
+                    {getWorkTypeLabel(topic.workType || 'coursework')}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Тип роботи</p>
+                </CardContent>
+              </Card>
+            </div>
           )}
-        </h4>
-        
-        {/* Інформація про фільтрацію за факультетом */}
-        <div className="mb-3 p-2 bg-muted/30 rounded-lg">
-          <div className="flex items-center gap-2">
-            <Info className="w-3 h-3 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {t('aiAssistant.faculty.filter')}: <strong className="text-foreground">{userFacultyName || t('aiAssistant.faculty.notSet')}</strong>
-            </span>
-          </div>
+
+          {/* Debug інформація про студента */}
+          {studentInfo && (
+            <div className="p-4 bg-muted/30 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Info className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Інформація про пошук:</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Студент:</span>
+                  <span className="font-medium">{studentInfo.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Спеціальність:</span>
+                  <Badge variant="secondary" className="text-sm">
+                    {studentInfo.specialty_code || 'Не вказано'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Курс:</span>
+                  <Badge variant="outline" className="text-sm">
+                    {studentInfo.course ? `${studentInfo.course} курс` : 'Не вказано'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Факультет:</span>
+                  <span className="font-medium">{studentInfo.faculty_name || 'Не вказано'}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Доступних місць:</span>
+                  <span className="font-medium text-green-600">{totalAvailableSpots}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Точних співпадінь:</span>
+                  <span className="font-medium text-green-600">{exactMatchesCount}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loadingTeachersForTopic === topic.title ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-2 text-muted-foreground">Пошук викладачів...</span>
+            </div>
+          ) : topic.error ? (
+            <Card className="text-center py-12">
+              <CardContent>
+                <GraduationCap className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
+                <h3 className="text-xl font-medium mb-2">Помилка пошуку</h3>
+                <p className="text-muted-foreground mb-6">
+                  {topic.error}
+                </p>
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleFindTeachersForTopic(topic.title, topicIndex)}
+                >
+                  Спробувати ще раз
+                </Button>
+              </CardContent>
+            </Card>
+          ) : hasAvailableTeachers ? (
+            <div>
+              {/* Інформація про пошук */}
+              {avgRelevance === 0 && sortedTeachers.length > 0 && (
+                <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-700 dark:text-amber-300">
+                        Не знайдено співпадінь за ключовими словами
+                      </p>
+                      <p className="text-amber-600 dark:text-amber-400 mt-1">
+                        Показано всіх викладачів вашого факультету. Ви можете звернутися до будь-якого з них.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Список викладачів у сітці - як в AllTeachersPage */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {sortedTeachers.map((match) => (
+                  <EnhancedTeacherCard 
+                    key={match.teacher.id} 
+                    match={match} 
+                    topic={topic}
+                    onSelect={() => handleTopicSelect(topic.title, match.teacher.id, topic.workType)}
+                    onViewProfile={openTeacherModal}
+                    showAvailability={false}
+                    studentInfo={studentInfo}
+                    showAllPlaces={true}
+                  />
+                ))}
+              </div>
+
+              {/* Кнопка для вибору довільного викладача */}
+              <div className="mt-6 text-center">
+                <Button
+                  variant="outline"
+                  onClick={() => handleChooseRandomTeacher(topic.title, topic.workType || 'coursework')}
+                  className="flex items-center gap-2 mx-auto"
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  Переглянути всіх викладачів
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Card className="text-center py-12">
+              <CardContent>
+                <GraduationCap className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
+                <h3 className="text-xl font-medium mb-2">Викладачів не знайдено</h3>
+                <p className="text-muted-foreground mb-6">
+                  Не знайдено викладачів за вашими критеріями
+                </p>
+                <div className="flex gap-3 justify-center">
+                  <Button 
+                    variant="outline"
+                    onClick={() => handleChooseRandomTeacher(topic.title, topic.workType || 'coursework')}
+                  >
+                    Переглянути всіх викладачів
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
-        
-        {loadingTeachersForTopic === topic.title ? (
-          <div className="flex justify-center items-center py-4">
-            <RefreshCw className="animate-spin w-4 h-4 text-muted-foreground mr-2" />
-            <span className="text-sm text-muted-foreground">{t('aiAssistant.teachers.searching')}</span>
-          </div>
-        ) : topic.error ? (
-          <div className="text-center py-4">
-            <AlertTriangle className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground mb-2">
-              {topic.error.includes('автентифікаці') || topic.error.includes('Authentication') 
-                ? t('aiAssistant.teachers.authenticationRequired') 
-                : t('aiAssistant.teachers.searchError')
-              }
-            </p>
-            {topic.error.includes('автентифікаці') || topic.error.includes('Authentication') ? (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => window.location.href = '/login'}
-              >
-                {t('aiAssistant.teachers.login')}
-              </Button>
-            ) : (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => handleFindTeachersForTopic(topic.title, topicIndex)}
-              >
-                {t('aiAssistant.teachers.tryAgain')}
-              </Button>
-            )}
-          </div>
-        ) : topic.teacherMatches && topic.teacherMatches.length > 0 ? (
-          <div className="grid gap-3">
-            {topic.teacherMatches.map((match) => (
-              <CompactTeacherCard 
-                key={match.teacher.id} 
-                match={match} 
-                topic={topic}
-                onSelect={() => handleTopicSelect(topic.title, match.teacher.id)}
-                onViewProfile={openTeacherModal}
-              />
-            ))}
-          </div>
-        ) : (
-          // ЛИШЕ ОДИН БЛОК ДЛЯ ВИПАДКУ "НЕ ЗНАЙДЕНО"
-          <ChooseRandomTeacher 
-            onSelect={() => handleChooseRandomTeacher(topic.title)}
-          />
-        )}
       </div>
     );
   };
@@ -1653,12 +2518,12 @@ const AIAssistant = () => {
     if (premiumSuggestions.length === 0 && !isLoadingPremium) return null;
 
     return (
-      <Card className="border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 dark:border-yellow-600">
+      <Card className="border-2 border-yellow-400 bg-gradient-to-br from-yellow-50 to-amber-50 dark:from-yellow-950/20 dark:to-amber-950/20 dark:border-yellow-600">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-yellow-700 dark:text-yellow-400">
             <Crown className="w-5 h-5" />
             {t('aiAssistant.premium.title')}
-            <Badge variant="secondary" className="bg-yellow-500 text-white dark:bg-yellow-600">
+            <Badge variant="secondary" className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white dark:from-yellow-600 dark:to-amber-600">
               {t('aiAssistant.premium.badge')}
             </Badge>
           </CardTitle>
@@ -1669,7 +2534,7 @@ const AIAssistant = () => {
         <CardContent className="space-y-4">
           {isLoadingPremium ? (
             <div className="flex justify-center items-center py-8">
-              <RefreshCw className="animate-spin w-6 h-6 text-yellow-500 mr-2" />
+              <Loader2 className="animate-spin w-6 h-6 text-yellow-500 mr-2" />
               <span className="text-yellow-600 dark:text-yellow-400">{t('aiAssistant.premium.loading')}</span>
             </div>
           ) : premiumSuggestions.length > 0 ? (
@@ -1688,6 +2553,17 @@ const AIAssistant = () => {
                       >
                         {getSuggestionTypeLabel(suggestion.type)}
                       </Badge>
+                      {suggestion.workType && (
+                        <Badge className={getWorkTypeColor(suggestion.workType)}>
+                          {getWorkTypeLabel(suggestion.workType)}
+                        </Badge>
+                      )}
+                      {suggestion.teacherName && (
+                        <Badge variant="secondary" className="text-xs">
+                          <User className="w-3 h-3 mr-1" />
+                          {suggestion.teacherName}
+                        </Badge>
+                      )}
                     </div>
                     <h3 className="font-semibold text-lg mb-2 text-foreground">{suggestion.title}</h3>
                     <p className="text-sm text-muted-foreground">
@@ -1717,7 +2593,7 @@ const AIAssistant = () => {
                 {/* Кнопки дій */}
                 <div className="flex justify-between items-center mt-3">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <User className="w-3 h-3" />
+                    <Crown className="w-3 h-3" />
                     {t('aiAssistant.premium.fromTeacher')}
                   </div>
                   
@@ -1727,14 +2603,20 @@ const AIAssistant = () => {
                         variant="outline" 
                         size="sm"
                         onClick={() => window.open(suggestion.url, '_blank')}
+                        className="flex items-center gap-1"
                       >
-                        <FileText className="w-3 h-3 mr-1" />
+                        <Eye className="w-3 h-3" />
                         {t('aiAssistant.premium.view')}
                       </Button>
                     )}
                     <Button 
                       size="sm"
-                      onClick={() => handleTopicSelect(suggestion.title)}
+                      onClick={() => handleTopicSelect(
+                        suggestion.title, 
+                        suggestion.teacherId, 
+                        suggestion.workType || determineWorkTypeFromTopic(suggestion.title)
+                      )}
+                      className="bg-gradient-to-r from-primary to-primary/80"
                     >
                       <Target className="w-3 h-3 mr-1" />
                       {t('aiAssistant.suggestions.choose')}
@@ -1754,46 +2636,47 @@ const AIAssistant = () => {
     );
   };
 
-  // Функція для відображення форми заявки
+  // ПОКРАЩЕНА ФУНКЦІЯ ДЛЯ ВІДОБРАЖЕННЯ ФОРМИ ЗАЯВКИ
   const renderApplicationForm = () => {
     if (!showApplicationForm) return null;
 
-    // Отримуємо дані профілю з localStorage або стану компонента
-    const getStudentProfileData = (): StudentInfo & { group?: string } => {
-      try {
-        // Спершу пробуємо отримати з localStorage
-        const currentUser = localStorage.getItem('currentUser');
-        if (currentUser) {
-          const userData = JSON.parse(currentUser);
-          return {
-            name: userData.name || "Студент",
-            email: userData.email || "",
-            phone: userData.phone || "",
-            program: userData.program || "",
-            year: userData.year || "",
-            group: userData.group || "",
-            id: userData.id || "",
-            bio: userData.bio || ""
-          };
-        }
-      } catch (error) {
-        console.error('Помилка отримання даних профілю:', error);
-      }
-      
-      // Якщо немає даних в localStorage, використовуємо дані з форми
+    const getStudentProfileData = (): CompleteStudentInfo & { group?: string } => {
       return {
-        name: applicationFormData.student_name || "Студент",
-        email: applicationFormData.student_email || "",
-        phone: applicationFormData.student_phone || "",
-        program: applicationFormData.student_program || "",
-        year: applicationFormData.student_year || "",
-        group: applicationFormData.student_group || "",
-        id: applicationFormData.student_id || "",
-        bio: ""
+        name: studentInfo?.name || "Студент",
+        email: studentInfo?.email || "",
+        phone: studentInfo?.phone || "",
+        program: studentInfo?.program || "",
+        year: studentInfo?.year || "",
+        course: studentInfo?.course,
+        group: studentInfo?.group || "",
+        id: studentInfo?.id || "",
+        bio: studentInfo?.bio || "",
+        specialty_id: studentInfo?.specialty_id,
+        specialty_code: studentInfo?.specialty_code || "",
+        specialty_name: studentInfo?.specialty_name || "",
+        faculty_id: studentInfo?.faculty_id,
+        faculty_name: studentInfo?.faculty_name || ""
       };
     };
 
     const studentProfile = getStudentProfileData();
+    
+    // Перевірка готовності форми до відправки
+    const isFormReady = () => {
+      const requiredFields = [
+        applicationFormData.topic.trim(),
+        applicationFormData.description.trim(),
+        applicationFormData.goals.trim(),
+        applicationFormData.requirements.trim(),
+        applicationFormData.student_name.trim(),
+        applicationFormData.student_email.trim()
+      ];
+      
+      return requiredFields.every(field => field.length > 0) && 
+             applicationFormData.teacherId && 
+             studentInfo?.specialty_id && 
+             studentInfo?.course;
+    };
 
     return (
       <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1803,6 +2686,11 @@ const AIAssistant = () => {
               <CardTitle className="flex items-center gap-2">
                 <Send className="w-5 h-5 text-primary" />
                 {t('aiAssistant.application.title')}
+                {applicationFormData.workType && (
+                  <Badge className={getWorkTypeColor(applicationFormData.workType)}>
+                    {getWorkTypeLabel(applicationFormData.workType)}
+                  </Badge>
+                )}
               </CardTitle>
               <Button
                 variant="ghost"
@@ -1815,10 +2703,41 @@ const AIAssistant = () => {
             </div>
             <CardDescription>
               {t('aiAssistant.application.description')}
+              {applicationFormData.teacherId && (
+                <span className="block mt-1 text-blue-600">
+                  Заявка буде надіслана вибраному викладачу
+                </span>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmitApplication} className="space-y-4">
+              {/* Тип роботи */}
+              <div>
+                <label className="text-sm font-medium mb-2 block text-foreground">
+                  Тип роботи *
+                </label>
+                <Select
+                  value={applicationFormData.workType}
+                  onValueChange={(value: 'coursework' | 'diploma' | 'practice') => 
+                    handleFormDataChange('workType', value)
+                  }
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Оберіть тип роботи" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="coursework">Курсова робота</SelectItem>
+                    <SelectItem value="diploma">Дипломний проєкт</SelectItem>
+                    <SelectItem value="practice">Звіт з практики</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Оберіть тип роботи для коректного планування та дедлайну
+                </p>
+              </div>
+
               <div>
                 <label className="text-sm font-medium mb-2 block text-foreground">
                   {t('aiAssistant.application.topic')} *
@@ -1878,30 +2797,42 @@ const AIAssistant = () => {
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block text-foreground">
-                  {t('aiAssistant.application.deadline')} *
-                </label>
-                <Input
-                  type="date"
-                  value={applicationFormData.deadline}
-                  onChange={(e) => handleFormDataChange('deadline', e.target.value)}
-                  required
-                  disabled={isSubmitting}
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
+  <label className="text-sm font-medium mb-2 block text-foreground">
+    {t('aiAssistant.application.deadline')} *
+  </label>
+  <Input
+    type="date"
+    value={applicationFormData.deadline}
+    onChange={(e) => {
+      const value = e.target.value;
+      if (value && value !== 'Invalid Date') {
+        handleFormDataChange('deadline', value);
+      }
+    }}
+    required
+    disabled={isSubmitting}
+    min={new Date().toISOString().split('T')[0]}
+  />
+  <p className="text-xs text-muted-foreground mt-1">
+    Дедлайн: {applicationFormData.deadline && applicationFormData.deadline !== 'Invalid Date' 
+      ? formatDateUA(applicationFormData.deadline) 
+      : 'Не вказано'}
+  </p>
+</div>
 
-              {/* Інформація про студента (автоматично заповнюється з профілю) */}
-              <div className="p-4 bg-muted/30 rounded-lg space-y-2">
+              {/* Інформація про студента */}
+              <div className="p-4 bg-muted/30 rounded-lg space-y-3">
                 <div className="flex justify-between items-center mb-2">
-                  <h4 className="font-medium text-sm">Інформація про студента</h4>
+                  <h4 className="font-medium text-sm flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    Інформація про студента
+                  </h4>
                   <Button 
                     type="button"
                     variant="outline" 
                     size="sm"
                     onClick={async () => {
                       const studentInfo = await getUpdatedStudentInfo();
-                      console.log('🔄 Manual refresh student info:', studentInfo);
                       if (studentInfo) {
                         setApplicationFormData(prev => ({
                           ...prev,
@@ -1910,18 +2841,23 @@ const AIAssistant = () => {
                           student_phone: studentInfo.phone || '',
                           student_program: studentInfo.program || '',
                           student_year: studentInfo.year || '',
-                          student_group: studentInfo.group || ''
+                          student_group: studentInfo.group || '',
+                          student_specialty_id: studentInfo.specialty_id,
+                          student_specialty_code: studentInfo.specialty_code || '',
+                          student_faculty_id: studentInfo.faculty_id
                         }));
                         toast.success('Дані профілю оновлено');
                       } else {
                         toast.error('Не вдалося отримати дані профілю');
                       }
                     }}
+                    disabled={isSubmitting}
                   >
                     Оновити з профілю
                   </Button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-muted-foreground">ПІБ:</span>
                     <p className="font-medium">{studentProfile.name}</p>
@@ -1930,48 +2866,117 @@ const AIAssistant = () => {
                     <span className="text-muted-foreground">Email:</span>
                     <p className="font-medium">{studentProfile.email || 'Не вказано'}</p>
                   </div>
+                  
+                  {studentProfile.specialty_code && (
+                    <div>
+                      <span className="text-muted-foreground">Спеціальність:</span>
+                      <p className="font-medium">
+                        {studentProfile.specialty_code}
+                        {studentProfile.specialty_name && ` - ${studentProfile.specialty_name}`}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {studentProfile.course && (
+                    <div>
+                      <span className="text-muted-foreground">Курс:</span>
+                      <p className="font-medium">{studentProfile.course}</p>
+                    </div>
+                  )}
+                  
                   {studentProfile.phone && (
                     <div>
                       <span className="text-muted-foreground">Телефон:</span>
                       <p className="font-medium">{studentProfile.phone}</p>
                     </div>
                   )}
+                  
                   {studentProfile.program && (
                     <div>
                       <span className="text-muted-foreground">Програма:</span>
                       <p className="font-medium">{studentProfile.program}</p>
                     </div>
                   )}
-                  {studentProfile.year && (
-                    <div>
-                      <span className="text-muted-foreground">Курс:</span>
-                      <p className="font-medium">{studentProfile.year}</p>
-                    </div>
-                  )}
+                  
                   {studentProfile.group && (
                     <div>
                       <span className="text-muted-foreground">Група:</span>
                       <p className="font-medium">{studentProfile.group}</p>
                     </div>
                   )}
+                  
                   {studentProfile.id && (
                     <div>
                       <span className="text-muted-foreground">ID студента:</span>
                       <p className="font-medium text-xs">{studentProfile.id}</p>
                     </div>
                   )}
+                  
+                  {studentProfile.faculty_name && (
+                    <div className="md:col-span-2">
+                      <span className="text-muted-foreground">Факультет:</span>
+                      <p className="font-medium">{studentProfile.faculty_name}</p>
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
+                
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <InfoIcon className="w-3 h-3" />
                   Ця інформація автоматично заповнюється з вашого профілю. 
                   Для редагування перейдіть у розділ "Профіль".
-                </p>
+                </div>
               </div>
 
               {applicationFormData.teacherId && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
-                  <p className="text-sm text-blue-700 dark:text-blue-300">
-                    <strong>Вибраний викладач:</strong> Заявка буде надіслана обраному викладачу
+                <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle className="w-4 h-4 text-blue-600" />
+                    <p className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                      Вибраний викладач:
+                    </p>
+                  </div>
+                  <p className="text-sm text-blue-600 dark:text-blue-400">
+                    Заявка буде надіслана обраному викладачу з урахуванням вашої спеціальності та курсу
                   </p>
+                </div>
+              )}
+
+              {/* Дебаг панель (тільки для розробників) */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      Режим розробника
+                    </span>
+                  </div>
+                  <div className="space-y-2 text-xs">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        debugApplicationData();
+                        toast.info('Дані форми проаналізовано (див. консоль)');
+                      }}
+                      className="w-full"
+                    >
+                      🔍 Проаналізувати дані форми
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleTestSubmit}
+                      className="w-full"
+                      disabled={isSubmitting}
+                    >
+                      🧪 Тестова відправка (без API)
+                    </Button>
+                    <div className="text-amber-600 dark:text-amber-400 text-xs">
+                      Статус: {isFormReady() ? '✅ Форма готова до відправки' : '❌ Форма не заповнена'}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1987,15 +2992,21 @@ const AIAssistant = () => {
                 </Button>
                 <Button
                   type="submit"
-                  className="flex-1"
-                  disabled={isSubmitting}
+                  className="flex-1 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                  disabled={isSubmitting || !isFormReady()}
+                  title={!isFormReady() ? 'Заповніть всі обов\'язкові поля та виберіть викладача' : ''}
                 >
                   {isSubmitting ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {t('aiAssistant.application.submitting')}
+                    </>
                   ) : (
-                    <Send className="w-4 h-4 mr-2" />
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      {t('aiAssistant.application.submit')}
+                    </>
                   )}
-                  {isSubmitting ? t('aiAssistant.application.submitting') : t('aiAssistant.application.submit')}
                 </Button>
               </div>
             </form>
@@ -2032,7 +3043,7 @@ const AIAssistant = () => {
               {aiFeatures.map((feature, i) => {
                 const Icon = feature.icon;
                 return (
-                  <Card key={i} className="hover:shadow transition border-border">
+                  <Card key={i} className="hover:shadow-lg transition-all border-border hover:border-primary/30">
                     <CardHeader className="flex items-start justify-between pb-2">
                       <Icon className="w-5 h-5 text-primary" />
                       <Badge variant={feature.status === 'active' ? 'default' : 'outline'}>
@@ -2089,16 +3100,23 @@ const AIAssistant = () => {
                       <Button 
                         onClick={handleGenerateSuggestions}
                         disabled={isLoadingSuggestions || !ideaInput.trim()}
-                        className="flex items-center gap-2"
+                        className="flex items-center gap-2 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                       >
                         {isLoadingSuggestions ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <Sparkles className="w-4 h-4" />
                         )}
                         {t('aiAssistant.suggestions.generate')}
                       </Button>
                     </div>
+                    
+                    {studentInfo && (
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        <InfoIcon className="w-3 h-3" />
+                        Пошук враховуватиме вашу спеціальність ({studentInfo.specialty_code}) та курс ({studentInfo.course})
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -2130,14 +3148,43 @@ const AIAssistant = () => {
                                   <Badge variant="outline">
                                     {topic.category}
                                   </Badge>
+                                  {topic.workType && (
+                                    <Badge className={getWorkTypeColor(topic.workType)}>
+                                      {getWorkTypeLabel(topic.workType)}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="text-muted-foreground mb-4">
                                   {topic.description}
                                 </p>
+                                
+                                {/* Додаткова інформація про тему */}
+                                {(topic.topicComplexity || topic.estimatedTime || topic.technologies) && (
+                                  <div className="flex flex-wrap gap-2 mb-4">
+                                    {topic.topicComplexity && (
+                                      <Badge variant="outline" className="text-xs">
+                                        <Target className="w-3 h-3 mr-1" />
+                                        {topic.topicComplexity === 'beginner' ? 'Початковий' : 
+                                         topic.topicComplexity === 'intermediate' ? 'Середній' : 'Просунутий'} рівень
+                                      </Badge>
+                                    )}
+                                    {topic.estimatedTime && (
+                                      <Badge variant="outline" className="text-xs">
+                                        <Clock className="w-3 h-3 mr-1" />
+                                        {topic.estimatedTime}
+                                      </Badge>
+                                    )}
+                                    {topic.technologies && topic.technologies.slice(0, 3).map((tech, idx) => (
+                                      <Badge key={idx} variant="secondary" className="text-xs">
+                                        {tech}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                               <Button
-                                onClick={() => handleTopicSelect(topic.title)}
-                                className="ml-4"
+                                onClick={() => handleTopicSelect(topic.title, undefined, topic.workType)}
+                                className="ml-4 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                               >
                                 <Target className="w-4 h-4 mr-2" />
                                 {t('aiAssistant.suggestions.choose')}
@@ -2151,15 +3198,16 @@ const AIAssistant = () => {
                                 size="sm"
                                 onClick={() => toggleTeachersForTopic(index, topic.title)}
                                 disabled={loadingTeachersForTopic === topic.title}
+                                className="flex items-center gap-2"
                               >
                                 {loadingTeachersForTopic === topic.title ? (
                                   <>
-                                    <RefreshCw className="w-3 h-3 animate-spin mr-2" />
+                                    <Loader2 className="w-3 h-3 animate-spin" />
                                     {t('aiAssistant.teachers.searching')}
                                   </>
                                 ) : (
                                   <>
-                                    <GraduationCap className="w-3 h-3 mr-2" />
+                                    <GraduationCap className="w-3 h-3" />
                                     {topic.showTeachers 
                                       ? t('aiAssistant.teachers.hide') 
                                       : t('aiAssistant.teachers.find')
@@ -2170,8 +3218,16 @@ const AIAssistant = () => {
 
                               {/* Статус викладачів */}
                               {topic.teacherMatches && (
-                                <div className="text-sm text-muted-foreground">
-                                  {t('aiAssistant.teachers.found')}: {topic.teacherMatches.length}
+                                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                                  <Users className="w-3 h-3" />
+                                  {studentInfo && topic.teacherMatches.some(t => 
+                                    t.availablePlaces?.details?.some(d => d.isExactMatch)
+                                  ) && (
+                                    <Badge variant="outline" className="text-xs bg-green-100 text-green-700 border-green-300">
+                                      <Check className="w-3 h-3 mr-1" />
+                                      Є точні співпадіння
+                                    </Badge>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -2192,8 +3248,11 @@ const AIAssistant = () => {
                 {isLoadingSuggestions && (
                   <Card>
                     <CardContent className="p-8 text-center">
-                      <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
+                      <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
                       <p className="text-muted-foreground">{t('aiAssistant.suggestions.loading')}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Генеруємо персоналізовані рекомендації з урахуванням вашої спеціальності та курсу...
+                      </p>
                     </CardContent>
                   </Card>
                 )}
@@ -2222,10 +3281,10 @@ const AIAssistant = () => {
                       <Button 
                         onClick={handleGenerateStructure}
                         disabled={isGenerating || !selectedTopic.trim()}
-                        className="flex items-center gap-2"
+                        className="flex items-center gap-2 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                       >
                         {isGenerating ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <Zap className="w-4 h-4" />
                         )}
@@ -2282,10 +3341,10 @@ const AIAssistant = () => {
                       <Button 
                         onClick={handleAnalyzeText}
                         disabled={isAnalyzing || !analysisText.trim()}
-                        className="w-full flex items-center gap-2"
+                        className="w-full flex items-center gap-2 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                       >
                         {isAnalyzing ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <Search className="w-4 h-4" />
                         )}

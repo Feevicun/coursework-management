@@ -27,6 +27,17 @@ import {
   ArrowLeft,
   Image,
   GripVertical,
+  Link,
+  Quote,
+  Code,
+  Minus,
+  Superscript,
+  Subscript,
+  Strikethrough,
+  Highlighter,
+  Heading1,
+  Heading2,
+  Heading3,
 } from "lucide-react";
 
 import Header from "@/components/Header";
@@ -52,7 +63,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
@@ -66,6 +76,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Note {
   id: string;
@@ -105,6 +116,10 @@ const NotesPage = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkText, setLinkText] = useState("");
   
   const [newNote, setNewNote] = useState({
     title: "",
@@ -119,48 +134,146 @@ const NotesPage = () => {
   });
   
   const [currentTag, setCurrentTag] = useState("");
-  const editorRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
-  // Завантаження нотаток з API
-  const fetchNotes = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch("/api/notes", {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const notesData = await response.json();
-        // Сортуємо нотатки за display_order
-        const sortedNotes = notesData.sort((a: Note, b: Note) => 
-          (a.displayOrder || 0) - (b.displayOrder || 0)
-        );
-        setNotes(sortedNotes);
-      } else {
-        console.error("Failed to fetch notes");
+  // Функції для форматування тексту
+  const wrapSelection = (before: string, after: string = "", defaultText: string = "текст") => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = textarea.value.substring(start, end);
+    const textToInsert = selectedText || defaultText;
+
+    const newText = textarea.value.substring(0, start) + before + textToInsert + after + textarea.value.substring(end);
+    
+    setNewNote(prev => ({ ...prev, content: newText }));
+    
+    // Встановлюємо курсор після вставленого тексту
+    setTimeout(() => {
+      if (textarea) {
+        const newCursorPos = start + before.length + textToInsert.length + after.length;
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
       }
-    } catch (error) {
-      console.error("Error fetching notes:", error);
-    } finally {
-      setLoading(false);
+    }, 0);
+  };
+
+  const formatText = (type: string) => {
+    switch (type) {
+      case "bold":
+        wrapSelection("**", "**", "жирний текст");
+        break;
+      case "italic":
+        wrapSelection("*", "*", "курсив");
+        break;
+      case "underline":
+        wrapSelection("<u>", "</u>", "підкреслений текст");
+        break;
+      case "strikethrough":
+        wrapSelection("~~", "~~", "закреслений текст");
+        break;
+      case "code":
+        wrapSelection("`", "`", "код");
+        break;
+      case "codeBlock":
+        wrapSelection("```\n", "\n```", "блок коду");
+        break;
+      case "highlight":
+        wrapSelection("==", "==", "виділений текст");
+        break;
+      case "superscript":
+        wrapSelection("<sup>", "</sup>", "верхній індекс");
+        break;
+      case "subscript":
+        wrapSelection("<sub>", "</sub>", "нижній індекс");
+        break;
+      case "heading1":
+        wrapSelection("# ", "", "Заголовок 1");
+        break;
+      case "heading2":
+        wrapSelection("## ", "", "Заголовок 2");
+        break;
+      case "heading3":
+        wrapSelection("### ", "", "Заголовок 3");
+        break;
+      case "blockquote":
+        wrapSelection("> ", "", "Цитата");
+        break;
+      case "bulletList":
+        wrapSelection("- ", "", "елемент списку");
+        break;
+      case "numberedList":
+        wrapSelection("1. ", "", "елемент списку");
+        break;
+      case "horizontalRule":
+        insertAtCursor("\n\n---\n\n");
+        break;
+      default:
+        break;
     }
   };
 
-  useEffect(() => {
-    fetchNotes();
-  }, []);
+  const insertAtCursor = (text: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
 
-  // Отримання унікальних категорій та тегів
-  const categories = Array.from(new Set(notes.map(note => note.category)));
-  const allTags = Array.from(new Set(notes.flatMap(note => note.tags)));
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const newText = textarea.value.substring(0, start) + text + textarea.value.substring(end);
+    
+    setNewNote(prev => ({ ...prev, content: newText }));
+    
+    setTimeout(() => {
+      if (textarea) {
+        const newCursorPos = start + text.length;
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 0);
+  };
 
-  // Фільтрація та сортування нотаток
-  useEffect(() => {
-    let filtered = notes;
+  const insertLink = () => {
+    if (!linkUrl.trim()) return;
+    
+    const text = linkText.trim() || linkUrl;
+    const markdownLink = `[${text}](${linkUrl})`;
+    insertAtCursor(markdownLink);
+    setShowLinkDialog(false);
+    setLinkUrl("");
+    setLinkText("");
+  };
+
+  const alignText = (alignment: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    
+    // Знаходимо початок і кінець параграфа
+    const textBefore = textarea.value.substring(0, start);
+    const textAfter = textarea.value.substring(end);
+    
+    const paragraphStart = textBefore.lastIndexOf('\n\n') + 2;
+    const paragraphEnd = textAfter.indexOf('\n\n');
+    const fullText = textarea.value;
+    
+    if (paragraphStart >= 0) {
+      const paragraph = fullText.substring(paragraphStart, end + (paragraphEnd >= 0 ? paragraphEnd : fullText.length));
+      const alignedParagraph = `<div style="text-align: ${alignment}">\n${paragraph}\n</div>\n\n`;
+      
+      const newText = fullText.substring(0, paragraphStart) + alignedParagraph + fullText.substring(end + (paragraphEnd >= 0 ? paragraphEnd : fullText.length));
+      setNewNote(prev => ({ ...prev, content: newText }));
+    }
+  };
+
+  // Функція для застосування фільтрів
+  const applyFilters = (notesList: Note[]) => {
+    let filtered = notesList;
 
     if (searchQuery) {
       filtered = filtered.filter(
@@ -190,7 +303,7 @@ const NotesPage = () => {
     }
 
     // Сортування
-    filtered = [...filtered].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       if (sortBy === "custom") {
         return (a.displayOrder || 0) - (b.displayOrder || 0);
       }
@@ -219,9 +332,97 @@ const NotesPage = () => {
         return aValue < bValue ? 1 : -1;
       }
     });
+  };
 
-    setFilteredNotes(filtered);
+  // Завантаження нотаток з API
+  const fetchNotes = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch("/api/notes", {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const notesData = await response.json();
+        // Сортуємо нотатки за display_order
+        const sortedNotes = notesData.sort((a: Note, b: Note) => 
+          (a.displayOrder || 0) - (b.displayOrder || 0)
+        );
+        setNotes(sortedNotes);
+        setFilteredNotes(applyFilters(sortedNotes));
+      } else {
+        console.error("Failed to fetch notes");
+      }
+    } catch (error) {
+      console.error("Error fetching notes:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotes();
+  }, []);
+
+  // Оновлення filteredNotes при зміні фільтрів
+  useEffect(() => {
+    setFilteredNotes(applyFilters(notes));
   }, [notes, searchQuery, selectedCategories, selectedTags, showBookmarked, showPublic, sortBy, sortOrder]);
+
+  // Обробка події створення нової нотатки з Header
+  useEffect(() => {
+    const handleCreateNewNote = () => {
+      setIsCreatingNote(true);
+      // Очищаємо стан нової нотатки
+      setNewNote({
+        title: "",
+        content: "",
+        tags: [],
+        category: "personal",
+        isBookmarked: false,
+        isPublic: false,
+        backgroundColor: "#ffffff",
+        textColor: "#000000",
+        images: [],
+      });
+      setEditingNote(null);
+    };
+
+    window.addEventListener('createNewNote', handleCreateNewNote);
+    
+    return () => {
+      window.removeEventListener('createNewNote', handleCreateNewNote);
+    };
+  }, []);
+
+  // Обробка створення нової нотатки
+  useEffect(() => {
+    const handleNoteCreated = (event: CustomEvent) => {
+      const newNote = event.detail;
+      // Додаємо нову нотатку до списку
+      setNotes(prev => [newNote, ...prev]);
+    };
+
+    window.addEventListener('noteCreated', handleNoteCreated as EventListener);
+    
+    return () => {
+      window.removeEventListener('noteCreated', handleNoteCreated as EventListener);
+    };
+  }, []);
+
+  // Автоматичне збільшення висоти textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [newNote.content]);
+
+  // Отримання унікальних категорій та тегів
+  const categories = Array.from(new Set(notes.map(note => note.category)));
+  const allTags = Array.from(new Set(notes.flatMap(note => note.tags)));
 
   // Функції для перегляду нотаток
   const openPreview = (note: Note) => {
@@ -322,11 +523,14 @@ const NotesPage = () => {
       
       if (!response.ok) {
         console.error("Failed to update note order");
+        // Якщо не вдалося оновити на бекенді, перезавантажуємо нотатки
+        await fetchNotes();
       } else {
         console.log("Note order updated successfully");
       }
     } catch (error) {
       console.error("Error updating note order:", error);
+      await fetchNotes(); // Перезавантажуємо у разі помилки
     }
   };
 
@@ -335,6 +539,7 @@ const NotesPage = () => {
     if (!noteToDelete) return;
     
     try {
+      setDeleteLoading(true);
       const response = await fetch(`/api/notes/${noteToDelete}`, {
         method: 'DELETE',
         headers: {
@@ -343,16 +548,22 @@ const NotesPage = () => {
       });
       
       if (response.ok) {
+        // ОНОВЛЕНО: Одночасно оновлюємо обидва стани
         setNotes(prev => prev.filter((note) => note.id !== noteToDelete));
+        setFilteredNotes(prev => prev.filter((note) => note.id !== noteToDelete));
+        
         if (previewNote?.id === noteToDelete) {
           closePreview();
         }
       } else {
         console.error("Failed to delete note");
+        alert(t('notes.messages.deleteError'));
       }
     } catch (error) {
       console.error("Error deleting note:", error);
+      alert(t('notes.messages.deleteError'));
     } finally {
+      setDeleteLoading(false);
       setDeleteDialogOpen(false);
       setNoteToDelete(null);
     }
@@ -525,43 +736,24 @@ const NotesPage = () => {
     }));
   };
 
-  // Функції для редактора тексту
-  const formatText = (command: string, value: string = '') => {
-    document.execCommand(command, false, value);
-    updateEditorContent();
+  // Спрощені функції для роботи з текстом
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewNote(prev => ({ ...prev, content: e.target.value }));
   };
 
-  const updateEditorContent = () => {
-    if (editorRef.current) {
-      const content = editorRef.current.innerHTML;
-      setNewNote(prev => ({ ...prev, content }));
-    }
-  };
-
-  const handleEditorInput = (e: React.FormEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLDivElement;
-    const content = target.innerHTML;
-    setNewNote(prev => ({ ...prev, content }));
-  };
-
-  const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text/plain');
-    document.execCommand('insertText', false, text);
-    updateEditorContent();
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Автоматичне збільшення висоти
+    const target = e.target as HTMLTextAreaElement;
+    target.style.height = 'auto';
+    target.style.height = target.scrollHeight + 'px';
   };
 
   const changeTextColor = (color: string) => {
     setNewNote(prev => ({ ...prev, textColor: color }));
-    formatText('styleWithCSS', 'true');
-    formatText('foreColor', color);
   };
 
   const changeBackgroundColor = (color: string) => {
     setNewNote(prev => ({ ...prev, backgroundColor: color }));
-    if (editorRef.current) {
-      editorRef.current.style.backgroundColor = color;
-    }
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -575,16 +767,12 @@ const NotesPage = () => {
           images: [...prev.images, imageUrl]
         }));
         
-        // Вставка зображення в редактор
-        if (editorRef.current) {
-          const img = document.createElement('img');
-          img.src = imageUrl;
-          img.style.maxWidth = '100%';
-          img.style.height = 'auto';
-          img.style.margin = '10px 0';
-          document.execCommand('insertHTML', false, img.outerHTML);
-          updateEditorContent();
-        }
+        // Додаємо посилання на зображення в текст у форматі Markdown
+        const imageMarkdown = `\n![Image](${imageUrl})\n`;
+        setNewNote(prev => ({
+          ...prev,
+          content: prev.content + imageMarkdown
+        }));
       };
       reader.readAsDataURL(file);
     }
@@ -650,15 +838,51 @@ const NotesPage = () => {
 
   const textColors = [
     "#000000", "#ffffff", "#ff0000", "#00ff00", "#0000ff", 
-    "#ffff00", "#ff00ff", "#00ffff", "#ffa500", "#800080"
+    "#ffff00", "#ff00ff", "#00ffff", "#ffa500", "#800080",
+    "#a52a2a", "#ffc0cb", "#90ee90", "#add8e6", "#d3d3d3"
   ];
 
   const backgroundColors = [
     "#ffffff", "#ffffcc", "#ccffcc", "#ccccff", "#ffcccc",
-    "#ffcc99", "#e6e6fa", "#f0fff0", "#f5f5dc", "#f0f8ff"
+    "#ffcc99", "#e6e6fa", "#f0fff0", "#f5f5dc", "#f0f8ff",
+    "#fff8dc", "#f5f5f5", "#faf0e6", "#f0f8ff", "#e6e6fa"
   ];
 
+  // const highlightColors = [
+  //   "#ffff00", "#90ee90", "#87ceeb", "#ffb6c1", "#dda0dd",
+  //   "#ffa500", "#98fb98", "#f0e68c", "#ffd700", "#e6e6fa"
+  // ];
+
   const activeFiltersCount = selectedCategories.length + selectedTags.length + (showBookmarked ? 1 : 0) + (showPublic ? 1 : 0);
+
+  // Функції для підрахунку слів та символів
+  const getWordCount = (text: string) => {
+    return text.trim() ? text.trim().split(/\s+/).length : 0;
+  };
+
+  const getCharacterCount = (text: string) => {
+    return text.length;
+  };
+
+  // Функція для перетворення Markdown в HTML для прев'ю
+  const markdownToHtml = (text: string) => {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/~~(.*?)~~/g, '<del>$1</del>')
+      .replace(/==(.*?)==/g, '<mark>$1</mark>')
+      .replace(/`(.*?)`/g, '<code>$1</code>')
+      .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/# (.*?)(\n|$)/g, '<h1>$1</h1>')
+      .replace(/## (.*?)(\n|$)/g, '<h2>$1</h2>')
+      .replace(/### (.*?)(\n|$)/g, '<h3>$1</h3>')
+      .replace(/> (.*?)(\n|$)/g, '<blockquote>$1</blockquote>')
+      .replace(/- (.*?)(\n|$)/g, '<li>$1</li>')
+      .replace(/(\d+)\. (.*?)(\n|$)/g, '<li>$2</li>')
+      .replace(/---/g, '<hr>')
+      .replace(/\n/g, '<br>');
+  };
 
   if (loading) {
     return (
@@ -801,14 +1025,22 @@ const NotesPage = () => {
                       <label className="text-xs">{t('notes.editor.textColor')}</label>
                       <div className="flex flex-wrap gap-1">
                         {textColors.map(color => (
-                          <button
-                            key={color}
-                            className={`w-6 h-6 rounded border ${
-                              newNote.textColor === color ? 'ring-2 ring-primary' : ''
-                            }`}
-                            style={{ backgroundColor: color }}
-                            onClick={() => changeTextColor(color)}
-                          />
+                          <TooltipProvider key={color}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  className={`w-6 h-6 rounded border ${
+                                    newNote.textColor === color ? 'ring-2 ring-primary' : ''
+                                  }`}
+                                  style={{ backgroundColor: color }}
+                                  onClick={() => changeTextColor(color)}
+                                />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{color}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         ))}
                       </div>
                     </div>
@@ -817,14 +1049,22 @@ const NotesPage = () => {
                       <label className="text-xs">{t('notes.editor.backgroundColor')}</label>
                       <div className="flex flex-wrap gap-1">
                         {backgroundColors.map(bg => (
-                          <button
-                            key={bg}
-                            className={`w-6 h-6 rounded border ${
-                              newNote.backgroundColor === bg ? 'ring-2 ring-primary' : ''
-                            }`}
-                            style={{ backgroundColor: bg }}
-                            onClick={() => changeBackgroundColor(bg)}
-                          />
+                          <TooltipProvider key={bg}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  className={`w-6 h-6 rounded border ${
+                                    newNote.backgroundColor === bg ? 'ring-2 ring-primary' : ''
+                                  }`}
+                                  style={{ backgroundColor: bg }}
+                                  onClick={() => changeBackgroundColor(bg)}
+                                />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{bg}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         ))}
                       </div>
                     </div>
@@ -840,86 +1080,301 @@ const NotesPage = () => {
                     className="text-2xl font-bold border-0 focus-visible:ring-0 p-0"
                   />
 
-                  {/* Панель інструментів редактора */}
-                  <div className="border rounded-lg p-3 bg-card">
-                    <div className="flex flex-wrap gap-1">
-                      {/* Стилі тексту */}
-                      <Toggle size="sm" onClick={() => formatText('bold')} title={t('notes.editor.textStyles.bold')}>
-                        <Bold className="h-4 w-4" />
-                      </Toggle>
-                      <Toggle size="sm" onClick={() => formatText('italic')} title={t('notes.editor.textStyles.italic')}>
-                        <Italic className="h-4 w-4" />
-                      </Toggle>
-                      <Toggle size="sm" onClick={() => formatText('underline')} title={t('notes.editor.textStyles.underline')}>
-                        <Underline className="h-4 w-4" />
-                      </Toggle>
-                      
-                      <div className="w-px bg-border mx-1" />
+                  {/* Розширена панель інструментів як у Word */}
+                  <div className="border rounded-lg p-3 bg-card space-y-3">
+                    <TooltipProvider>
+                      <div className="flex flex-wrap gap-1">
+                        {/* Стилі тексту */}
+                        <div className="flex items-center gap-1 border-r pr-2 mr-2">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("bold")}>
+                                <Bold className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Жирний (Ctrl+B)</TooltipContent>
+                          </Tooltip>
 
-                      {/* Вирівнювання */}
-                      <Toggle size="sm" onClick={() => formatText('justifyLeft')} title={t('notes.editor.alignment.left')}>
-                        <AlignLeft className="h-4 w-4" />
-                      </Toggle>
-                      <Toggle size="sm" onClick={() => formatText('justifyCenter')} title={t('notes.editor.alignment.center')}>
-                        <AlignCenter className="h-4 w-4" />
-                      </Toggle>
-                      <Toggle size="sm" onClick={() => formatText('justifyRight')} title={t('notes.editor.alignment.right')}>
-                        <AlignRight className="h-4 w-4" />
-                      </Toggle>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("italic")}>
+                                <Italic className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Курсив (Ctrl+I)</TooltipContent>
+                          </Tooltip>
 
-                      <div className="w-px bg-border mx-1" />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("underline")}>
+                                <Underline className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Підкреслений (Ctrl+U)</TooltipContent>
+                          </Tooltip>
 
-                      {/* Списки */}
-                      <Toggle size="sm" onClick={() => formatText('insertUnorderedList')} title={t('notes.editor.lists.unordered')}>
-                        <ListTodo className="h-4 w-4" />
-                      </Toggle>
-                      <Toggle size="sm" onClick={() => formatText('insertOrderedList')} title={t('notes.editor.lists.ordered')}>
-                        <ListOrdered className="h-4 w-4" />
-                      </Toggle>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("strikethrough")}>
+                                <Strikethrough className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Закреслений</TooltipContent>
+                          </Tooltip>
+                        </div>
 
-                      <div className="w-px bg-border mx-1" />
+                        {/* Заголовки */}
+                        <div className="flex items-center gap-1 border-r pr-2 mr-2">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("heading1")}>
+                                <Heading1 className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Заголовок 1</TooltipContent>
+                          </Tooltip>
 
-                      {/* Завантаження зображень */}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageUpload}
-                        className="hidden"
-                        id="image-upload"
-                      />
-                      <label htmlFor="image-upload">
-                        <Toggle size="sm" asChild>
-                          <span className="cursor-pointer" title={t('notes.editor.image')}>
-                            <Image className="h-4 w-4" />
-                          </span>
-                        </Toggle>
-                      </label>
-                    </div>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("heading2")}>
+                                <Heading2 className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Заголовок 2</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("heading3")}>
+                                <Heading3 className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Заголовок 3</TooltipContent>
+                          </Tooltip>
+                        </div>
+
+                        {/* Вирівнювання */}
+                        <div className="flex items-center gap-1 border-r pr-2 mr-2">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => alignText("left")}>
+                                <AlignLeft className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Вирівняти по лівому краю</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => alignText("center")}>
+                                <AlignCenter className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Вирівняти по центру</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => alignText("right")}>
+                                <AlignRight className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Вирівняти по правому краю</TooltipContent>
+                          </Tooltip>
+                        </div>
+
+                        {/* Списки */}
+                        <div className="flex items-center gap-1 border-r pr-2 mr-2">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("bulletList")}>
+                                <ListTodo className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Маркований список</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("numberedList")}>
+                                <ListOrdered className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Нумерований список</TooltipContent>
+                          </Tooltip>
+                        </div>
+
+                        {/* Спеціальні елементи */}
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("blockquote")}>
+                                <Quote className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Цитата</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("code")}>
+                                <Code className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Вбудований код</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("codeBlock")}>
+                                <FileText className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Блок коду</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => setShowLinkDialog(true)}>
+                                <Link className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Вставити посилання</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("horizontalRule")}>
+                                <Minus className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Горизонтальна лінія</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </div>
+
+                      {/* Друга лінія інструментів */}
+                      <div className="flex flex-wrap gap-2 items-center pt-2 border-t">
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("superscript")}>
+                                <Superscript className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Верхній індекс</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("subscript")}>
+                                <Subscript className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Нижній індекс</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Toggle size="sm" onClick={() => formatText("highlight")}>
+                                <Highlighter className="h-4 w-4" />
+                              </Toggle>
+                            </TooltipTrigger>
+                            <TooltipContent>Виділення тексту</TooltipContent>
+                          </Tooltip>
+                        </div>
+
+                        {/* Завантаження зображень */}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                            className="hidden"
+                            id="image-upload"
+                          />
+                          <label htmlFor="image-upload">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-2 cursor-pointer h-8"
+                            >
+                              <Image className="h-4 w-4" />
+                              Зображення
+                            </Button>
+                          </label>
+                        </div>
+
+                        <div className="text-xs text-muted-foreground ml-auto">
+                          Підтримка Markdown та HTML
+                        </div>
+                      </div>
+                    </TooltipProvider>
                   </div>
 
-                  {/* Редактор тексту */}
-                  <div
-                    ref={editorRef}
-                    contentEditable
-                    className="min-h-[500px] p-6 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                    style={{
-                      backgroundColor: newNote.backgroundColor,
-                      color: newNote.textColor,
-                    }}
-                    onInput={handleEditorInput}
-                    onPaste={handleEditorPaste}
-                    dangerouslySetInnerHTML={{ __html: newNote.content }}
-                  />
+                  {/* Textarea для введення тексту */}
+                  <div className="relative">
+                    <textarea
+                      ref={textareaRef}
+                      value={newNote.content}
+                      onChange={handleTextareaChange}
+                      onKeyDown={handleTextareaKeyDown}
+                      placeholder={t('notes.editor.contentPlaceholder')}
+                      className="min-h-[500px] w-full p-6 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary resize-none font-sans text-base leading-relaxed"
+                      style={{
+                        backgroundColor: newNote.backgroundColor,
+                        color: newNote.textColor,
+                        direction: 'ltr',
+                        textAlign: 'left'
+                      }}
+                      dir="ltr"
+                    />
+                  </div>
                   
                   <div className="flex justify-between items-center text-sm text-muted-foreground">
-                    <span>{newNote.content.replace(/<[^>]*>/g, '').split(/\s+/).filter(word => word.length > 0).length} {t('notes.editor.words')}</span>
-                    <span>{newNote.content.replace(/<[^>]*>/g, '').length} {t('notes.editor.characters')}</span>
+                    <span>{getWordCount(newNote.content)} {t('notes.editor.words')}</span>
+                    <span>{getCharacterCount(newNote.content)} {t('notes.editor.characters')}</span>
                   </div>
                 </div>
               </div>
             </div>
           </main>
         </div>
+
+        {/* Діалог додавання посилання */}
+        <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Додати посилання</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">URL посилання</label>
+                <Input
+                  placeholder="https://example.com"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Текст посилання (необов'язково)</label>
+                <Input
+                  placeholder="Текст посилання"
+                  value={linkText}
+                  onChange={(e) => setLinkText(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowLinkDialog(false)}>
+                  Скасувати
+                </Button>
+                <Button onClick={insertLink}>
+                  Додати посилання
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1184,44 +1639,63 @@ const NotesPage = () => {
                               )}
                             </div>
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 opacity-70 group-hover:opacity-100 transition-opacity"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => startEditingNote(note)}>
-                                {t('notes.actions.edit')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => toggleBookmark(note.id, note.isBookmarked)}>
-                                {note.isBookmarked ? t('notes.actions.removeBookmark') : t('notes.actions.toggleBookmark')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => toggleVisibility(note.id, note.isPublic)}>
-                                {note.isPublic ? t('notes.actions.makePrivate') : t('notes.actions.makePublic')}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={() => startDeleting(note.id)}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                {t('notes.actions.delete')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {/* ОНОВЛЕНО: Delete окремо, а решта в меню */}
+                          <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                            {/* Кнопка видалення */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/20"
+                              onClick={() => startDeleting(note.id)}
+                              title={t('notes.actions.delete')}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            
+                            {/* Меню з іншими діями */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 hover:bg-gray-50 hover:text-gray-600 dark:hover:bg-gray-500/20"
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem 
+                                  onClick={() => toggleBookmark(note.id, note.isBookmarked)}
+                                  className="hover:bg-blue-50 hover:text-blue-600 focus:bg-blue-50 focus:text-blue-600 dark:hover:bg-blue-500/20 dark:focus:bg-blue-500/20"
+                                >
+                                  <Bookmark className={`h-4 w-4 mr-2 ${note.isBookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`} />
+                                  {note.isBookmarked ? t('notes.actions.removeBookmark') : t('notes.actions.toggleBookmark')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => toggleVisibility(note.id, note.isPublic)}
+                                  className="hover:bg-green-50 hover:text-green-600 focus:bg-green-50 focus:text-green-600 dark:hover:bg-green-500/20 dark:focus:bg-green-500/20"
+                                >
+                                  <Eye className={`h-4 w-4 mr-2 ${note.isPublic ? 'text-blue-500' : ''}`} />
+                                  {note.isPublic ? t('notes.actions.makePrivate') : t('notes.actions.makePublic')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => startEditingNote(note)}
+                                  className="hover:bg-purple-50 hover:text-purple-600 focus:bg-purple-50 focus:text-purple-600 dark:hover:bg-purple-500/20 dark:focus:bg-purple-500/20"
+                                >
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  {t('notes.actions.edit')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-3 pt-0">
                         <div 
-                          className="line-clamp-3 text-sm leading-relaxed cursor-pointer"
+                          className="line-clamp-3 text-sm leading-relaxed cursor-pointer prose prose-sm max-w-none"
                           style={{ color: note.textColor }}
                           onClick={() => openPreview(note)}
-                          dangerouslySetInnerHTML={{ __html: note.content }}
+                          dangerouslySetInnerHTML={{ __html: markdownToHtml(note.content) }}
                         />
 
                         {note.tags.length > 0 && (
@@ -1295,10 +1769,10 @@ const NotesPage = () => {
                                 )}
                               </div>
                               <div 
-                                className="text-sm line-clamp-1 cursor-pointer"
+                                className="text-sm line-clamp-1 cursor-pointer prose prose-sm max-w-none"
                                 style={{ color: note.textColor }}
                                 onClick={() => openPreview(note)}
-                                dangerouslySetInnerHTML={{ __html: note.content }}
+                                dangerouslySetInnerHTML={{ __html: markdownToHtml(note.content) }}
                               />
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                                 <div className="flex items-center gap-1">
@@ -1321,36 +1795,55 @@ const NotesPage = () => {
                               </div>
                             </div>
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 opacity-70 hover:opacity-100 transition-opacity"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => startEditingNote(note)}>
-                                {t('notes.actions.edit')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => toggleBookmark(note.id, note.isBookmarked)}>
-                                {note.isBookmarked ? t('notes.actions.removeBookmark') : t('notes.actions.toggleBookmark')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => toggleVisibility(note.id, note.isPublic)}>
-                                {note.isPublic ? t('notes.actions.makePrivate') : t('notes.actions.makePublic')}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={() => startDeleting(note.id)}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                {t('notes.actions.delete')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {/* ОНОВЛЕНО: Delete окремо, а решта в меню для списку */}
+                          <div className="flex items-center gap-1 opacity-70 hover:opacity-100 transition-opacity">
+                            {/* Кнопка видалення */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/20"
+                              onClick={() => startDeleting(note.id)}
+                              title={t('notes.actions.delete')}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            
+                            {/* Меню з іншими діями */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 hover:bg-gray-50 hover:text-gray-600 dark:hover:bg-gray-500/20"
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem 
+                                  onClick={() => toggleBookmark(note.id, note.isBookmarked)}
+                                  className="hover:bg-blue-50 hover:text-blue-600 focus:bg-blue-50 focus:text-blue-600 dark:hover:bg-blue-500/20 dark:focus:bg-blue-500/20"
+                                >
+                                  <Bookmark className={`h-4 w-4 mr-2 ${note.isBookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`} />
+                                  {note.isBookmarked ? t('notes.actions.removeBookmark') : t('notes.actions.toggleBookmark')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => toggleVisibility(note.id, note.isPublic)}
+                                  className="hover:bg-green-50 hover:text-green-600 focus:bg-green-50 focus:text-green-600 dark:hover:bg-green-500/20 dark:focus:bg-green-500/20"
+                                >
+                                  <Eye className={`h-4 w-4 mr-2 ${note.isPublic ? 'text-blue-500' : ''}`} />
+                                  {note.isPublic ? t('notes.actions.makePrivate') : t('notes.actions.makePublic')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => startEditingNote(note)}
+                                  className="hover:bg-purple-50 hover:text-purple-600 focus:bg-purple-50 focus:text-purple-600 dark:hover:bg-purple-500/20 dark:focus:bg-purple-500/20"
+                                >
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  {t('notes.actions.edit')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -1389,7 +1882,7 @@ const NotesPage = () => {
               backgroundColor: previewNote?.backgroundColor,
               color: previewNote?.textColor
             }}
-            dangerouslySetInnerHTML={{ __html: previewNote?.content || '' }}
+            dangerouslySetInnerHTML={{ __html: markdownToHtml(previewNote?.content || '') }}
           />
           
           {previewNote && previewNote.tags.length > 0 && (
@@ -1435,15 +1928,28 @@ const NotesPage = () => {
             </AlertDialogDescription>
 
             <div className="flex gap-2 w-full">
-              <AlertDialogCancel className="flex-1 h-9 text-sm">
+              <AlertDialogCancel 
+                className="flex-1 h-9 text-sm"
+                disabled={deleteLoading}
+              >
                 {t('notes.deleteDialog.cancel')}
               </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDeleteNote}
+                disabled={deleteLoading}
                 className="flex-1 h-9 bg-destructive text-destructive-foreground hover:bg-destructive/90 text-sm"
               >
-                <Trash2 className="w-3 h-3 mr-1" />
-                {t('notes.deleteDialog.delete')}
+                {deleteLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-1" />
+                    {t('notes.deleteDialog.deleting')}
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3 h-3 mr-1" />
+                    {t('notes.deleteDialog.delete')}
+                  </>
+                )}
               </AlertDialogAction>
             </div>
           </div>
